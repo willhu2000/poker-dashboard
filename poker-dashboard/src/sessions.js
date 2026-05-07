@@ -12,15 +12,21 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-export function saveSession(fileName, stats) {
+export function isDuplicate(contentHash) {
+  return loadSessions().some(s => s.contentHash === contentHash);
+}
+
+export function saveSession(fileName, stats, gameDate = null, contentHash = null) {
   const sessions = loadSessions();
   const id = genId();
   sessions.unshift({
     id,
     fileName,
+    gameDate: gameDate ? new Date(gameDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
     uploadedAt: new Date().toISOString(),
     handCount: stats.handCount,
     playerNames: Object.keys(stats.players),
+    contentHash,
     stats,
   });
   localStorage.setItem(KEY, JSON.stringify(sessions));
@@ -34,12 +40,33 @@ export function deleteSession(id) {
 
 export function mergeSessions(sessions) {
   if (!sessions.length) return null;
-  if (sessions.length === 1) return sessions[0].stats;
+  if (sessions.length === 1) {
+    const session = sessions[0];
+    const stats = session.stats;
+    // Tag hands with session metadata for single session too (for consistency)
+    for (const player of Object.values(stats.players)) {
+      player.handsHistory.forEach(h => {
+        h.sessionId = session.id;
+        h.sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
+      });
+      player.badBeats.forEach(bb => {
+        bb.sessionId = session.id;
+        bb.sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
+      });
+      player.suckOuts.forEach(so => {
+        so.sessionId = session.id;
+        so.sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
+      });
+    }
+    return stats;
+  }
 
   const players = {};
   let handCount = 0;
 
   for (const session of sessions) {
+    const sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
+    const sessionId = session.id;
     handCount += session.handCount;
     for (const [name, sp] of Object.entries(session.stats.players)) {
       if (!players[name]) {
@@ -73,9 +100,13 @@ export function mergeSessions(sessions) {
       p.cashOut         += sp.cashOut || 0;
       p.shownHands    = p.shownHands.concat(sp.shownHands || []);
       p.rangeHands    = p.rangeHands.concat(sp.rangeHands || []);
-      p.handsHistory  = p.handsHistory.concat(sp.handsHistory || []);
-      p.badBeats      = p.badBeats.concat(sp.badBeats || []);
-      p.suckOuts      = p.suckOuts.concat(sp.suckOuts || []);
+      // Tag hands with session metadata as we concat
+      const taggedHistory = (sp.handsHistory || []).map(h => ({ ...h, sessionId, sessionDate }));
+      const taggedBadBeats = (sp.badBeats || []).map(bb => ({ ...bb, sessionId, sessionDate }));
+      const taggedSuckOuts = (sp.suckOuts || []).map(so => ({ ...so, sessionId, sessionDate }));
+      p.handsHistory  = p.handsHistory.concat(taggedHistory);
+      p.badBeats      = p.badBeats.concat(taggedBadBeats);
+      p.suckOuts      = p.suckOuts.concat(taggedSuckOuts);
       for (const [cat, cnt] of Object.entries(sp.handCategories || {})) {
         p.handCategories[cat] = (p.handCategories[cat] || 0) + cnt;
       }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { classifyHand } from '../parser.js';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
@@ -145,7 +145,7 @@ const SUCKOUT_NONE = [
 ];
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PlayerDetail({ player: p }) {
+export default function PlayerDetail({ player: p, isMerged = false }) {
   const [showGrid, setShowGrid] = useState(false);
   const [showRadarInfo, setShowRadarInfo] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -212,6 +212,15 @@ export default function PlayerDetail({ player: p }) {
     if (handFilter === 'suckouts')  return h.isSuckOut;
     return true;
   });
+
+  useEffect(() => {
+    console.log(`[${p.name}] Filter Debug:`, {
+      filter: handFilter,
+      handsHistoryCount: handsHistory.length,
+      filteredCount: filteredHands.length,
+      sampleHands: handsHistory.slice(0, 3).map(h => ({ num: h.num, isBadBeat: h.isBadBeat, isSuckOut: h.isSuckOut, wasShown: h.wasShown, won: h.won })),
+    });
+  }, [p, handFilter, handsHistory.length, filteredHands.length]);
 
   return (
     <div className="player-detail">
@@ -348,12 +357,13 @@ export default function PlayerDetail({ player: p }) {
             <div style={{ overflowX: 'auto' }}>
               <table className="hand-table">
                 <thead>
-                  <tr><th>Hand #</th><th>Cards</th><th>Result</th><th>Board</th><th>Pot</th></tr>
+                  <tr><th>Hand #</th>{isMerged && <th>Session</th>}<th>Cards</th><th>Result</th><th>Board</th><th>Pot</th></tr>
                 </thead>
                 <tbody>
                   {[...categoryHands].reverse().map(h => (
                     <tr key={h.num} className={h.won ? 'won' : ''}>
                       <td>#{h.num}</td>
+                      {isMerged && <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{h.sessionDate || '—'}</td>}
                       <td><CardBadge card={h.c1} /><CardBadge card={h.c2} /></td>
                       <td>
                         {h.isBadBeat
@@ -400,7 +410,7 @@ export default function PlayerDetail({ player: p }) {
           {suckOuts.map((so, i) => (
             <div key={i} className="bad-beat-card suck-out-card">
               <div className="bb-header">
-                <span className="bb-num">Hand #{so.num}</span>
+                <span className="bb-num">Hand #{so.num}{isMerged && so.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({so.sessionDate})</span>}</span>
                 <span className="bb-severity">{SO_SEVERITY[so.oppHandRank] || ''}</span>
                 <span className="bb-pot">Pot: {so.potSize.toLocaleString()}</span>
               </div>
@@ -445,7 +455,7 @@ export default function PlayerDetail({ player: p }) {
           {badBeats.map((bb, i) => (
             <div key={i} className="bad-beat-card">
               <div className="bb-header">
-                <span className="bb-num">Hand #{bb.num}</span>
+                <span className="bb-num">Hand #{bb.num}{isMerged && bb.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({bb.sessionDate})</span>}</span>
                 <span className="bb-severity">{BB_SEVERITY[bb.myHandRank] || ''}</span>
                 <span className="bb-pot">Pot: {bb.potSize.toLocaleString()}</span>
               </div>
@@ -494,7 +504,7 @@ export default function PlayerDetail({ player: p }) {
           <table className="hand-table">
             <thead>
               <tr>
-                <th>Hand #</th><th>Cards</th><th>Type</th><th>Result</th><th>Pot</th>
+                <th>Hand #</th>{isMerged && <th>Session</th>}<th>Cards</th><th>Type</th><th>Result</th><th>Pot</th>
                 <th style={{ width: 24 }}></th>
               </tr>
             </thead>
@@ -508,6 +518,7 @@ export default function PlayerDetail({ player: p }) {
                     onClick={() => setExpandedHand(isExp ? null : h.num)}
                     style={{ cursor: 'pointer' }}>
                     <td>#{h.num}</td>
+                    {isMerged && <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{h.sessionDate || '—'}</td>}
                     <td>
                       {hasCards
                         ? <><CardBadge card={h.c1} /><CardBadge card={h.c2} /></>

@@ -1,6 +1,15 @@
 // PokerNow CSV Log Parser
 import Papa from 'papaparse';
 
+export function hashContent(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
 export function parseLog(csvText) {
   const result = Papa.parse(csvText, {
     header: true,
@@ -88,4 +97,27 @@ export function classifyHand(c1, c2) {
   if (gap === 1 && lo >= 5) return suited ? 'Suited Connector' : 'One-Gap Connector';
   if (gap <= 2 && lo >= 4 && suited) return 'Suited Connector';
   return 'Speculative / Trash';
+}
+
+export function extractGameDate(rows) {
+  for (const row of rows) {
+    if (row.at) {
+      const d = new Date(row.at);
+      if (!isNaN(d)) return d;
+    }
+  }
+  // Fallback: scan entry text for YYYY-MM-DD
+  for (const row of rows) {
+    const dateMatch = row.entry.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (dateMatch) {
+      return new Date(dateMatch[1], parseInt(dateMatch[2]) - 1, dateMatch[3]);
+    }
+  }
+  return null;
+}
+
+export function formatSessionName(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const d = new Date(date);
+  return `poker-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

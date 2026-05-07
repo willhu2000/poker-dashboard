@@ -40,13 +40,26 @@ function GlossaryPanel() {
   );
 }
 
-export default function Dashboard({ data, fileName, isMerged, sessionCount, onBack, onViewMerged, onAddSession, error }) {
+export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], onBack, onViewMerged, onUpdateSessions, onAddSession, error }) {
   const { players, handCount } = data;
   const playerList = Object.values(players).sort((a, b) => b.netChips - a.netChips);
   const [selectedPlayer, setSelectedPlayer] = useState(playerList[0]?.name || null);
+  const [showSelectorMenu, setShowSelectorMenu] = useState(false);
   const addInputRef = useRef(null);
 
   const selected = players[selectedPlayer];
+
+  const handleSessionToggle = (sessionId, checked) => {
+    let newIds;
+    if (checked) {
+      newIds = [...selectedIds, sessionId];
+    } else {
+      newIds = selectedIds.filter(id => id !== sessionId);
+    }
+    if (newIds.length > 0) {
+      onUpdateSessions(newIds);
+    }
+  };
 
   const handleAddFile = useCallback((e) => {
     const file = e.target.files[0];
@@ -67,7 +80,24 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, onBa
             {isMerged && <span className="tag" style={{ marginLeft: 10 }}>Merged</span>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', position: 'relative' }}>
+          {isMerged && (
+            <div style={{ position: 'relative' }}>
+              <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={() => setShowSelectorMenu(m => !m)}>
+                📋 Viewing {selectedIds.length} of {allSessions.length} ▼
+              </button>
+              {showSelectorMenu && (
+                <div className="session-selector-menu">
+                  {allSessions.map(s => (
+                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', padding: '8px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      <input type="checkbox" checked={selectedIds.includes(s.id)} onChange={(e) => handleSessionToggle(s.id, e.target.checked)} style={{ marginRight: 8, cursor: 'pointer' }} />
+                      <span style={{ fontSize: '0.85rem' }}>{s.fileName}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {!isMerged && sessionCount >= 2 && (
             <button className="btn btn-primary" style={{ fontSize: '0.85rem' }} onClick={onViewMerged}>
               ⚡ View All {sessionCount} Sessions
@@ -148,7 +178,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, onBa
         ))}
       </div>
 
-      {selected && <PlayerDetail player={selected} />}
+      {selected && <PlayerDetail player={selected} isMerged={isMerged} />}
 
       <hr className="divider" />
 
