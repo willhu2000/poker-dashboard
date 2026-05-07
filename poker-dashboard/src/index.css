@@ -573,3 +573,50 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
 .suck-out-row { background: rgba(0, 212, 170, 0.05); }
 .suck-out-row td { color: var(--win); }
 .result-badge.suck-out { background: rgba(0, 212, 170, 0.15); color: var(--win); }
+
+/* ── Board cards with separators ── */
+.board-cards { display:flex; align-items:center; gap:2px; flex-wrap:wrap; }
+.board-sep { color:var(--muted); font-size:0.65rem; margin:0 3px; opacity:0.6; }
+
+/* ── Sortable table headers ── */
+.hand-table th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
+.hand-table th.sortable:hover { color:var(--text); }
+.hand-table th.sort-active { color:var(--accent); }
+
+/* ── Search bar ── */
+.search-row { display:flex; gap:8px; margin-bottom:10px; align-items:center; }
+.search-input {
+  flex:1; padding:6px 12px;
+  background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); font-size:0.82rem;
+  outline:none; min-width:0;
+}
+.search-input:focus { border-color:var(--accent); }
+.search-col-select {
+  background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; color:var(--muted); font-size:0.78rem;
+  padding:6px 10px; cursor:pointer; outline:none; flex-shrink:0;
+}
+.search-col-select:focus { border-color:var(--accent); }
+
+/* ── Detail mode toggle ── */
+.detail-toggle-btn {
+  font-size:0.72rem; padding:3px 10px; border-radius:10px;
+  border:1px solid var(--border); background:var(--surface2);
+  color:var(--muted); cursor:pointer; transition:all 0.15s;
+}
+.detail-toggle-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(108,99,255,0.1); }
+.detail-toggle-btn:hover { border-color:var(--accent); color:var(--text); }
+
+/* ── Action log ── */
+.action-log { display:flex; flex-direction:column; gap:6px; font-size:0.78rem; }
+.al-group { }
+.al-street-label {
+  display:flex; align-items:center; gap:6px;
+  font-size:0.68rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:0.08em; color:var(--accent); margin-bottom:3px; flex-wrap:wrap;
+}
+.al-board { display:flex; gap:2px; }
+.al-action { display:flex; gap:6px; padding:1px 0; }
+.al-player { font-weight:600; color:var(--text); min-width:90px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.al-verb { color:var(--muted); }

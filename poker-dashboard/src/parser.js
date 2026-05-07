@@ -119,5 +119,5 @@ export function extractGameDate(rows) {
 export function formatSessionName(date = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   const d = new Date(date);
-  return `poker-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `poker-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${d.getFullYear()}`;
 }

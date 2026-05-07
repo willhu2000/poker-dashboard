@@ -17,6 +17,10 @@ function emptyHand() {
     board: [],            // up to 5 cards
     viewerCards: null,    // [card1, card2] for "Your hand is"
     pots: [],
+    dealer: null,         // player name who is dealer
+    sb: null,             // player name who is small blind
+    bb: null,             // player name who is big blind
+    actionLog: [],        // [{type:'action'|'street', street, player?, action?, amount?}, ...]
   };
 }
 
@@ -160,6 +164,7 @@ export function analyseLog(rows) {
             num: hand.number,
             board: hand.board.slice(),
             potSize,
+            actionLog: hand.actionLog.slice(),
           };
 
           // Record on the loser as a bad beat
@@ -240,6 +245,10 @@ export function analyseLog(rows) {
         isSuckOut,
         myHandName,
         winnerHandName,
+        dealer: hand.dealer,
+        sb: hand.sb,
+        bb: hand.bb,
+        actionLog: hand.actionLog,
       });
     }
   }
@@ -280,6 +289,13 @@ export function analyseLog(rows) {
     const quitMatch = e.match(/^The player "(.+?)" quits the game with a stack of (\d+)/);
     if (quitMatch) {
       getPlayer(extractName(quitMatch[1])).cashOut += parseInt(quitMatch[2], 10);
+      continue;
+    }
+
+    // ── Dealer detection (before guard, per-hand metadata) ──────────────────
+    const dealerMatch = e.match(/^"(.+?)" is the dealer$/);
+    if (dealerMatch && currentHand) {
+      currentHand.dealer = extractName(dealerMatch[1]);
       continue;
     }
 
@@ -327,6 +343,7 @@ export function analyseLog(rows) {
       } else if (cards.length > 0) {
         currentHand.board = cards;
       }
+      currentHand.actionLog.push({ type: 'street', street: currentHand.street, board: currentHand.board.slice() });
       continue;
     }
 
@@ -339,12 +356,14 @@ export function analyseLog(rows) {
         currentHand.preflopActions[name].push('fold');
       }
       getPlayer(name).streetActions[currentHand.street]++;
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'fold' });
       continue;
     }
 
     const callMatch = e.match(/^"(.+?)" calls (\d+)/);
     if (callMatch) {
       const name = extractName(callMatch[1]);
+      const amount = parseInt(callMatch[2], 10);
       if (currentHand.street === 'preflop') {
         currentHand.preflopActions[name] = currentHand.preflopActions[name] || [];
         currentHand.preflopActions[name].push('call');
@@ -352,12 +371,14 @@ export function analyseLog(rows) {
       const p = getPlayer(name);
       p.streetActions[currentHand.street]++;
       if (currentHand.street !== 'preflop') p.totalCalls++;
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'call', amount });
       continue;
     }
 
     const raiseMatch = e.match(/^"(.+?)" raises to (\d+)/);
     if (raiseMatch) {
       const name = extractName(raiseMatch[1]);
+      const amount = parseInt(raiseMatch[2], 10);
       if (currentHand.street === 'preflop') {
         currentHand.preflopActions[name] = currentHand.preflopActions[name] || [];
         currentHand.preflopActions[name].push('raise');
@@ -365,12 +386,14 @@ export function analyseLog(rows) {
       const p = getPlayer(name);
       p.streetActions[currentHand.street]++;
       if (currentHand.street !== 'preflop') p.totalBetsRaises++;
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'raise', amount });
       continue;
     }
 
     const betMatch = e.match(/^"(.+?)" bets (\d+)/);
     if (betMatch) {
       const name = extractName(betMatch[1]);
+      const amount = parseInt(betMatch[2], 10);
       if (currentHand.street === 'preflop') {
         currentHand.preflopActions[name] = currentHand.preflopActions[name] || [];
         currentHand.preflopActions[name].push('bet');
@@ -378,6 +401,7 @@ export function analyseLog(rows) {
       const p = getPlayer(name);
       p.streetActions[currentHand.street]++;
       if (currentHand.street !== 'preflop') p.totalBetsRaises++;
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'bet', amount });
       continue;
     }
 
@@ -387,15 +411,20 @@ export function analyseLog(rows) {
       const p = getPlayer(name);
       p.streetActions[currentHand.street]++;
       if (currentHand.street !== 'preflop') p.totalChecks++;
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'check' });
       continue;
     }
 
     // ── Blinds (not voluntary) ───────────────────────────────────────────────
-    const blindMatch = e.match(/^"(.+?)" posts a (?:small|big) blind of \d+/);
+    const blindMatch = e.match(/^"(.+?)" posts a (small|big) blind of (\d+)/);
     if (blindMatch) {
       const name = extractName(blindMatch[1]);
+      const isSmall = blindMatch[2] === 'small';
+      const amount = parseInt(blindMatch[3], 10);
       currentHand.preflopActions[name] = currentHand.preflopActions[name] || [];
       currentHand.preflopActions[name].push('blind');
+      if (isSmall) currentHand.sb = name; else currentHand.bb = name;
+      currentHand.actionLog.push({ type: 'action', street: 'preflop', player: name, action: isSmall ? 'post-sb' : 'post-bb', amount });
       continue;
     }
 
@@ -410,6 +439,7 @@ export function analyseLog(rows) {
         if (!currentHand.shownCards[name]) currentHand.shownCards[name] = [];
         currentHand.shownCards[name].push(normaliseCard(parts[0]));
       }
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'show' });
       continue;
     }
 
@@ -417,7 +447,9 @@ export function analyseLog(rows) {
     const collectedMatch = e.match(/^"(.+?)" collected (\d+) from pot/);
     if (collectedMatch) {
       const name = extractName(collectedMatch[1]);
-      currentHand.winners.push({ name, amount: parseInt(collectedMatch[2], 10) });
+      const amount = parseInt(collectedMatch[2], 10);
+      currentHand.winners.push({ name, amount });
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'collect', amount });
       continue;
     }
   }

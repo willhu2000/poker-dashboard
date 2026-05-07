@@ -17,7 +17,10 @@ function evalFive(cards) {
   for (const r of rv) cnt[r] = (cnt[r] || 0) + 1;
   const freqs = Object.values(cnt).sort((a, b) => b - a);
 
-  if (isFlush && isStraight) return { rank: 8, name: 'Straight Flush' };
+  if (isFlush && isStraight) {
+    const isRoyal = uniq.length === 5 && uniq[4] - uniq[0] === 4 && uniq[4] === 14;
+    return isRoyal ? { rank: 9, name: 'Royal Flush' } : { rank: 8, name: 'Straight Flush' };
+  }
   if (freqs[0] === 4)              return { rank: 7, name: 'Four of a Kind' };
   if (freqs[0] === 3 && freqs[1] === 2) return { rank: 6, name: 'Full House' };
   if (isFlush)                     return { rank: 5, name: 'Flush' };

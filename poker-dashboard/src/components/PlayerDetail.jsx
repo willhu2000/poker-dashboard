@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { classifyHand } from '../parser.js';
+import { bestHand } from '../handEval.js';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
   PieChart, Pie, Cell, Tooltip, Legend,
@@ -7,6 +8,12 @@ import {
 
 const COLORS = ['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a29bfe','#55efc4','#fdcb6e','#e17055','#74b9ff'];
 const RANKS_DESC = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-');
+  return `${m}-${d}-${y}`;
+}
 
 // ── Hand category label ───────────────────────────────────────────────────────
 function categoryLabel(c1, c2) {
@@ -35,6 +42,115 @@ function categoryLabel(c1, c2) {
   return 'Speculative / Trash';
 }
 
+// ── Hand strength for sort ────────────────────────────────────────────────────
+const RANK_VAL = { '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14 };
+
+function handStrength(c1, c2) {
+  if (!c1 || !c2) return -1;
+  const r1 = RANK_VAL[c1.rank] || 0;
+  const r2 = RANK_VAL[c2.rank] || 0;
+  const hi = Math.max(r1, r2), lo = Math.min(r1, r2);
+  const suited = c1.suit === c2.suit && c1.suit !== '?';
+  if (r1 === r2) return 500 + hi * 10;          // pairs top
+  return hi * 15 + lo + (suited ? 1 : 0);       // hi card dominates, suited bonus
+}
+
+// ── Card query parser ─────────────────────────────────────────────────────────
+const _RMAP = {
+  'a':'A','ace':'A','aces':'A',
+  'k':'K','king':'K','kings':'K',
+  'q':'Q','queen':'Q','queens':'Q',
+  'j':'J','jack':'J','jacks':'J',
+  't':'10','ten':'10','tens':'10','10':'10',
+  '9':'9','nine':'9','nines':'9','8':'8','eight':'8','eights':'8',
+  '7':'7','seven':'7','sevens':'7','6':'6','six':'6','sixes':'6',
+  '5':'5','five':'5','fives':'5','4':'4','four':'4','fours':'4',
+  '3':'3','three':'3','threes':'3','2':'2','two':'2','twos':'2','deuce':'2','deuces':'2',
+};
+const _SMAP = { 's':'s','spade':'s','spades':'s','h':'h','heart':'h','hearts':'h','d':'d','diamond':'d','diamonds':'d','c':'c','club':'c','clubs':'c' };
+
+function parseCardQuery(input) {
+  const toks = input.toLowerCase().split(/[\s,]+/).filter(Boolean);
+  const cards = [];
+  let i = 0;
+  while (i < toks.length && cards.length < 2) {
+    const t = toks[i];
+    // compact rank+suit: "as","kd","10h"
+    const rs = t.match(/^(a|k|q|j|10|[2-9])(s|h|d|c)$/);
+    if (rs) { cards.push({ rank: _RMAP[rs[1]], suit: _SMAP[rs[2]] }); i++; continue; }
+    // pure rank word
+    if (_RMAP[t]) {
+      const rank = _RMAP[t];
+      if (i+1 < toks.length && _SMAP[toks[i+1]]) { cards.push({ rank, suit: _SMAP[toks[i+1]] }); i+=2; }
+      else { cards.push({ rank, suit: null }); i++; }
+      continue;
+    }
+    // doubled single-char: "aa","kk","99"
+    const dd = t.match(/^([akqjt2-9])\1$/);
+    if (dd && _RMAP[dd[1]]) { const r = _RMAP[dd[1]]; cards.push({ rank:r,suit:null },{ rank:r,suit:null }); i++; continue; }
+    // "1010"
+    if (t === '1010') { cards.push({ rank:'10',suit:null },{ rank:'10',suit:null }); i++; continue; }
+    // two-rank compact: "ak","qj","aks"
+    const tr = t.match(/^([akqjt2-9])(10|[akqjt2-9])[so]?$/);
+    if (tr && _RMAP[tr[1]] && _RMAP[tr[2]]) { cards.push({ rank:_RMAP[tr[1]],suit:null },{ rank:_RMAP[tr[2]],suit:null }); i++; continue; }
+    i++;
+  }
+  return cards;
+}
+
+function cardMatchesDesc(card, desc) {
+  if (!card || !desc) return false;
+  if (desc.rank && card.rank !== desc.rank) return false;
+  if (desc.suit && card.suit !== desc.suit) return false;
+  return true;
+}
+
+function handMatchesCardQuery(c1, c2, descs) {
+  if (!descs?.length) return true;
+  if (descs.length === 1) return cardMatchesDesc(c1, descs[0]) || cardMatchesDesc(c2, descs[0]);
+  const [d1, d2] = descs;
+  return (cardMatchesDesc(c1,d1)&&cardMatchesDesc(c2,d2)) || (cardMatchesDesc(c1,d2)&&cardMatchesDesc(c2,d1));
+}
+
+function computeHandStrength(h) {
+  const board = (h.board || []).filter(c => c && c.rank);
+  if (h.c1 && h.c2) {
+    if (board.length === 0) {
+      // Preflop: only pair or high card
+      return h.c1.rank === h.c2.rank ? { rank: 1, name: 'Pair' } : { rank: 0, name: 'High Card' };
+    }
+    return bestHand([h.c1, h.c2], board) ?? null;
+  }
+  // Unknown hole cards — evaluate board alone (needs ≥5 cards)
+  if (board.length >= 5) return bestHand([], board) ?? null;
+  return null;
+}
+
+function matchesSearch(h, query, col) {
+  if (!query) return true;
+  const q = query.toLowerCase().trim();
+  const chkHand = () => String(h.num).includes(q) || `#${h.num}`.includes(q);
+  const chkCards = () => {
+    const ds = parseCardQuery(query);
+    return ds.length > 0 ? handMatchesCardQuery(h.c1, h.c2, ds) : categoryLabel(h.c1,h.c2).toLowerCase().includes(q);
+  };
+  const chkType = () => categoryLabel(h.c1,h.c2).toLowerCase().includes(q);
+  const chkSess = () => fmtDate(h.sessionDate).toLowerCase().includes(q)||(h.sessionDate||'').includes(q);
+  const chkRes  = () => (h.isBadBeat?'bad beat':h.isSuckOut?'suck-out':h.won?'won win':h.wasShown?'lost loss':'fold folded').includes(q);
+  const chkPot      = () => String(h.potSize||0).includes(q);
+  const chkStrength = () => (computeHandStrength(h)?.name ?? '').toLowerCase().includes(q);
+  switch(col){
+    case 'hand': return chkHand();
+    case 'cards': return chkCards();
+    case 'type': return chkType();
+    case 'session': return chkSess();
+    case 'result': return chkRes();
+    case 'pot': return chkPot();
+    case 'strength': return chkStrength();
+    default: return chkHand()||chkCards()||chkType()||chkSess()||chkRes()||chkPot()||chkStrength();
+  }
+}
+
 // ── Card badge ────────────────────────────────────────────────────────────────
 function CardBadge({ card }) {
   if (!card) return null;
@@ -43,6 +159,60 @@ function CardBadge({ card }) {
     <span className={`card-badge ${card.suit}`}>
       {card.rank}{suitMap[card.suit] || card.suit}
     </span>
+  );
+}
+
+// ── Board cards with flop/turn/river separators ───────────────────────────────
+function BoardCards({ board }) {
+  if (!board?.length) return <span style={{ color:'var(--muted)' }}>—</span>;
+  return (
+    <div className="board-cards">
+      {board.slice(0,3).map((c,i) => <CardBadge key={i} card={c}/>)}
+      {board.length>3&&<><span className="board-sep">|</span><CardBadge card={board[3]}/></>}
+      {board.length>4&&<><span className="board-sep">|</span><CardBadge card={board[4]}/></>}
+    </div>
+  );
+}
+
+// ── Action log ────────────────────────────────────────────────────────────────
+const ACT_TEXT = {
+  'post-sb': a=>`posts small blind ${a.amount?.toLocaleString()??''}`,
+  'post-bb': a=>`posts big blind ${a.amount?.toLocaleString()??''}`,
+  'fold': ()=>'folds',
+  'call': a=>`calls ${a.amount?.toLocaleString()??''}`,
+  'raise': a=>`raises to ${a.amount?.toLocaleString()??''}`,
+  'bet': a=>`bets ${a.amount?.toLocaleString()??''}`,
+  'check': ()=>'checks',
+  'show': ()=>'shows hand',
+  'collect': a=>`collects ${a.amount?.toLocaleString()??''}`,
+};
+
+function ActionLog({ log }) {
+  if (!log?.length) return <p style={{color:'var(--muted)',fontSize:'0.78rem'}}>No action data (re-upload to capture).</p>;
+  const groups = [];
+  let cur = { street:'preflop', board:null, actions:[] };
+  for (const ev of log) {
+    if (ev.type==='street') { groups.push(cur); cur={street:ev.street,board:ev.board,actions:[]}; }
+    else cur.actions.push(ev);
+  }
+  groups.push(cur);
+  return (
+    <div className="action-log">
+      {groups.filter(g=>g.actions.length>0).map((g,gi)=>(
+        <div key={gi} className="al-group">
+          <div className="al-street-label">
+            {g.street.toUpperCase()}
+            {g.board?.length>0&&<span className="al-board">{g.board.map((c,i)=><CardBadge key={i} card={c}/>)}</span>}
+          </div>
+          {g.actions.map((act,ai)=>(
+            <div key={ai} className="al-action">
+              <span className="al-player">{act.player}</span>
+              <span className="al-verb">{ACT_TEXT[act.action]?.(act)??act.action}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -151,6 +321,11 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [handFilter, setHandFilter] = useState('all');
   const [expandedHand, setExpandedHand] = useState(null);
+  const [detailMode, setDetailMode] = useState(false);
+  const [sortCol, setSortCol] = useState('hand');
+  const [sortDir, setSortDir] = useState('desc');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchCol, setSearchCol] = useState('all');
 
   const tags = styleTag(p);
 
@@ -181,8 +356,8 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
   // Bad beats & suck-outs
   const badBeats = [...(p.badBeats || [])].sort((a, b) => b.myHandRank - a.myHandRank);
   const suckOuts = [...(p.suckOuts || [])].sort((a, b) => b.oppHandRank - a.oppHandRank);
-  const ominousMsg    = OMINOUS[   (p.name.charCodeAt(0) || 0) % OMINOUS.length];
-  const suckOutEmpty  = SUCKOUT_NONE[(p.name.charCodeAt(0) || 0) % SUCKOUT_NONE.length];
+  const ominousMsg   = OMINOUS[   (p.name.charCodeAt(0) || 0) % OMINOUS.length];
+  const suckOutEmpty = SUCKOUT_NONE[(p.name.charCodeAt(0) || 0) % SUCKOUT_NONE.length];
 
   // Hand history filters
   const FILTERS = [
@@ -198,33 +373,70 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
     if (key === 'all')       return handsHistory.length;
     if (key === 'showdowns') return handsHistory.filter(h => h.wasShown).length;
     if (key === 'wins')      return handsHistory.filter(h => h.won).length;
-    if (key === 'losses')    return handsHistory.filter(h => !h.won).length;
+    if (key === 'losses')    return handsHistory.filter(h => h.wasShown && !h.won).length;
     if (key === 'badbeats')  return handsHistory.filter(h => h.isBadBeat).length;
     if (key === 'suckouts')  return handsHistory.filter(h => h.isSuckOut).length;
     return 0;
   }
 
-  const filteredHands = [...handsHistory].reverse().filter(h => {
-    if (handFilter === 'showdowns') return h.wasShown;
-    if (handFilter === 'wins')      return h.won;
-    if (handFilter === 'losses')    return !h.won;
-    if (handFilter === 'badbeats')  return h.isBadBeat;
-    if (handFilter === 'suckouts')  return h.isSuckOut;
-    return true;
-  });
+  // Sort handler
+  function handleSortClick(col) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir(col === 'hand' || col === 'strength' || col === 'pot' ? 'desc' : 'asc'); }
+  }
 
-  useEffect(() => {
-    console.log(`[${p.name}] Filter Debug:`, {
-      filter: handFilter,
-      handsHistoryCount: handsHistory.length,
-      filteredCount: filteredHands.length,
-      sampleHands: handsHistory.slice(0, 3).map(h => ({ num: h.num, isBadBeat: h.isBadBeat, isSuckOut: h.isSuckOut, wasShown: h.wasShown, won: h.won })),
+  // Sortable column header
+  function SortTh({ col, children, style }) {
+    const active = sortCol === col;
+    return (
+      <th onClick={() => handleSortClick(col)} className={`sortable${active ? ' sort-active' : ''}`} style={style}>
+        {children} <span style={{opacity:0.5,fontSize:'0.7em'}}>{active ? (sortDir==='asc' ? '↑' : '↓') : '↕'}</span>
+      </th>
+    );
+  }
+
+  // Filtered + sorted hand list
+  const filteredHands = (() => {
+    let result = handsHistory.filter(h => {
+      if (handFilter === 'showdowns') return h.wasShown;
+      if (handFilter === 'wins')      return h.won;
+      if (handFilter === 'losses')    return h.wasShown && !h.won;
+      if (handFilter === 'badbeats')  return h.isBadBeat;
+      if (handFilter === 'suckouts')  return h.isSuckOut;
+      return true;
     });
-  }, [p, handFilter, handsHistory.length, filteredHands.length]);
+    if (searchQuery.trim()) result = result.filter(h => matchesSearch(h, searchQuery, searchCol));
+    result = [...result].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === 'hand')    cmp = ((a.sessionDate||'').localeCompare(b.sessionDate||'')) || a.num - b.num;
+      else if (sortCol === 'pot')     cmp = (a.potSize||0) - (b.potSize||0);
+      else if (sortCol === 'cards')   cmp = handStrength(a.c1, a.c2) - handStrength(b.c1, b.c2);
+      else if (sortCol === 'type')    cmp = categoryLabel(a.c1, a.c2).localeCompare(categoryLabel(b.c1, b.c2));
+      else if (sortCol === 'session') cmp = (a.sessionDate||'').localeCompare(b.sessionDate||'');
+      else if (sortCol === 'result') {
+        const rk = h => h.isBadBeat ? 4 : h.isSuckOut ? 3 : h.won ? 2 : h.wasShown ? 1 : 0;
+        cmp = rk(a) - rk(b);
+      }
+      else if (sortCol === 'strength') {
+        cmp = (computeHandStrength(a)?.rank ?? -1) - (computeHandStrength(b)?.rank ?? -1);
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return result;
+  })();
 
   return (
     <div className="player-detail">
-      <h2>{p.name}</h2>
+      {/* Header row with name + detail mode toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+        <h2 style={{ margin: 0, flex: 1 }}>{p.name}</h2>
+        <button
+          className={`detail-toggle-btn${detailMode ? ' active' : ''}`}
+          onClick={() => setDetailMode(d => !d)}
+        >
+          {detailMode ? 'Simple View' : 'Detailed Mode'}
+        </button>
+      </div>
       <div className="subtitle">
         {tags.map(t => (
           <span key={t.label} className={`tag ${t.cls}`} style={{ marginRight: 6 }}>{t.label}</span>
@@ -363,7 +575,7 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
                   {[...categoryHands].reverse().map(h => (
                     <tr key={h.num} className={h.won ? 'won' : ''}>
                       <td>#{h.num}</td>
-                      {isMerged && <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{h.sessionDate || '—'}</td>}
+                      {isMerged && <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{fmtDate(h.sessionDate)}</td>}
                       <td><CardBadge card={h.c1} /><CardBadge card={h.c2} /></td>
                       <td>
                         {h.isBadBeat
@@ -376,11 +588,7 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
                                 ? <span className="result-badge loss">✗ Lost</span>
                                 : <span className="result-badge fold">Folded</span>}
                       </td>
-                      <td>
-                        {h.board.length > 0
-                          ? <div style={{ display: 'flex', gap: 3 }}>{h.board.map((c, i) => <CardBadge key={i} card={c} />)}</div>
-                          : <span style={{ color: 'var(--muted)' }}>—</span>}
-                      </td>
+                      <td><BoardCards board={h.board} /></td>
                       <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>
                         {h.potSize > 0 ? h.potSize.toLocaleString() : '—'}
                       </td>
@@ -410,7 +618,7 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
           {suckOuts.map((so, i) => (
             <div key={i} className="bad-beat-card suck-out-card">
               <div className="bb-header">
-                <span className="bb-num">Hand #{so.num}{isMerged && so.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({so.sessionDate})</span>}</span>
+                <span className="bb-num">Hand #{so.num}{isMerged && so.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(so.sessionDate)})</span>}</span>
                 <span className="bb-severity">{SO_SEVERITY[so.oppHandRank] || ''}</span>
                 <span className="bb-pot">Pot: {so.potSize.toLocaleString()}</span>
               </div>
@@ -427,10 +635,16 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
                   <div className="bb-hand-name" style={{ color: 'var(--muted)' }}>{so.oppHandName}</div>
                 </div>
               </div>
-              {so.board.length > 0 && (
+              {so.board?.length > 0 && (
                 <div className="bb-board">
                   <span className="bb-board-label">Board: </span>
-                  {so.board.map((c, j) => <CardBadge key={j} card={c} />)}
+                  <BoardCards board={so.board} />
+                </div>
+              )}
+              {detailMode && (
+                <div style={{marginTop:10}}>
+                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
+                  <ActionLog log={so.actionLog}/>
                 </div>
               )}
             </div>
@@ -455,7 +669,7 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
           {badBeats.map((bb, i) => (
             <div key={i} className="bad-beat-card">
               <div className="bb-header">
-                <span className="bb-num">Hand #{bb.num}{isMerged && bb.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({bb.sessionDate})</span>}</span>
+                <span className="bb-num">Hand #{bb.num}{isMerged && bb.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(bb.sessionDate)})</span>}</span>
                 <span className="bb-severity">{BB_SEVERITY[bb.myHandRank] || ''}</span>
                 <span className="bb-pot">Pot: {bb.potSize.toLocaleString()}</span>
               </div>
@@ -472,10 +686,16 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
                   <div className="bb-hand-name">{bb.oppHandName}</div>
                 </div>
               </div>
-              {bb.board.length > 0 && (
+              {bb.board?.length > 0 && (
                 <div className="bb-board">
                   <span className="bb-board-label">Board: </span>
-                  {bb.board.map((c, j) => <CardBadge key={j} card={c} />)}
+                  <BoardCards board={bb.board} />
+                </div>
+              )}
+              {detailMode && (
+                <div style={{marginTop:10}}>
+                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
+                  <ActionLog log={bb.actionLog}/>
                 </div>
               )}
             </div>
@@ -485,6 +705,27 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
 
       {/* ── Hand History ──────────────────────────────────────────────────────── */}
       <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 16 }}>Hand History</div>
+
+      {/* Search bar */}
+      <div className="search-row">
+        <input
+          className="search-input"
+          type="text"
+          placeholder="Search hands…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+        />
+        <select className="search-col-select" value={searchCol} onChange={e => setSearchCol(e.target.value)}>
+          <option value="all">All columns</option>
+          <option value="hand">Hand #</option>
+          <option value="cards">Cards</option>
+          <option value="type">Type</option>
+          {isMerged && <option value="session">Session</option>}
+          <option value="result">Result</option>
+          <option value="pot">Pot</option>
+          <option value="strength">Hand Strength</option>
+        </select>
+      </div>
 
       <div className="hand-filters">
         {FILTERS.map(f => (
@@ -504,21 +745,28 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
           <table className="hand-table">
             <thead>
               <tr>
-                <th>Hand #</th>{isMerged && <th>Session</th>}<th>Cards</th><th>Type</th><th>Result</th><th>Pot</th>
+                <SortTh col="hand">Hand #</SortTh>
+                {isMerged && <SortTh col="session">Session</SortTh>}
+                <SortTh col="cards">Cards</SortTh>
+                <SortTh col="type">Type</SortTh>
+                <SortTh col="result">Result</SortTh>
+                <SortTh col="strength">Hand Strength</SortTh>
+                <SortTh col="pot">Pot</SortTh>
                 <th style={{ width: 24 }}></th>
               </tr>
             </thead>
             <tbody>
               {filteredHands.flatMap(h => {
-                const isExp = expandedHand === h.num;
+                const rowKey = h.sessionId ? `${h.sessionId}-${h.num}` : String(h.num);
+                const isExp = expandedHand === rowKey;
                 const hasCards = h.c1 && h.c2;
                 const rows = [
-                  <tr key={h.num}
+                  <tr key={rowKey}
                     className={`hand-row ${h.isBadBeat ? 'bad-beat-row' : ''} ${h.isSuckOut && !h.isBadBeat ? 'suck-out-row' : ''} ${h.won && !h.isBadBeat && !h.isSuckOut ? 'won' : ''}`}
-                    onClick={() => setExpandedHand(isExp ? null : h.num)}
+                    onClick={() => setExpandedHand(isExp ? null : rowKey)}
                     style={{ cursor: 'pointer' }}>
                     <td>#{h.num}</td>
-                    {isMerged && <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{h.sessionDate || '—'}</td>}
+                    {isMerged && <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{fmtDate(h.sessionDate)}</td>}
                     <td>
                       {hasCards
                         ? <><CardBadge card={h.c1} /><CardBadge card={h.c2} /></>
@@ -538,6 +786,9 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
                               ? <span className="result-badge loss">✗ Lost</span>
                               : <span className="result-badge fold">Folded</span>}
                     </td>
+                    <td style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                      {computeHandStrength(h)?.name ?? '—'}
+                    </td>
                     <td style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>
                       {h.potSize > 0 ? h.potSize.toLocaleString() : '—'}
                     </td>
@@ -547,18 +798,18 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
 
                 if (isExp) {
                   rows.push(
-                    <tr key={`${h.num}-exp`} className="hand-expanded-row">
-                      <td colSpan={6} style={{ padding: 0 }}>
+                    <tr key={`${rowKey}-exp`} className="hand-expanded-row">
+                      <td colSpan={6 + (isMerged ? 1 : 0) + 1} style={{ padding: 0 }}>
                         <div className="hand-detail-panel">
-                          {h.board.length > 0 && (
+                          {h.board?.length > 0 && (
                             <div className="hd-row">
                               <span className="hd-label">Board</span>
                               <div className="hd-cards">
-                                {h.board.map((c, i) => <CardBadge key={i} card={c} />)}
+                                <BoardCards board={h.board} />
                               </div>
                             </div>
                           )}
-                          {h.opponents.length > 0 && (
+                          {h.opponents?.length > 0 && (
                             <div className="hd-row">
                               <span className="hd-label">Shown</span>
                               <div className="hd-opponents">
@@ -582,6 +833,22 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
                                   : 'Folded'}
                             </span>
                           </div>
+                          {detailMode && (h.dealer || h.sb || h.bb) && (
+                            <div className="hd-row">
+                              <span className="hd-label">Roles</span>
+                              <span style={{fontSize:'0.8rem'}}>
+                                {h.dealer && <><>D: </><strong>{h.dealer}</strong>&nbsp;&nbsp;</>}
+                                {h.sb && <><>SB: </><strong>{h.sb}</strong>&nbsp;&nbsp;</>}
+                                {h.bb && <><>BB: </><strong>{h.bb}</strong></>}
+                              </span>
+                            </div>
+                          )}
+                          {detailMode && (
+                            <div className="hd-row" style={{flexDirection:'column',gap:4}}>
+                              <span className="hd-label">Play by Play</span>
+                              <ActionLog log={h.actionLog}/>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
