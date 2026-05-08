@@ -3,6 +3,13 @@ import Leaderboard from './Leaderboard.jsx';
 import PlayerDetail from './PlayerDetail.jsx';
 import OverviewCharts from './OverviewCharts.jsx';
 
+// Format a signed chip total: "+125" for wins, "-400" for losses, "0" for break-even.
+// Avoids the "+-400" bug from naively prepending "+".
+function formatNet(n) {
+  if (n > 0) return `+${n}`;
+  return `${n}`;
+}
+
 const GLOSSARY = [
   { abbr: 'VPIP', full: 'Voluntarily Put $ In Pot', desc: '% of hands where a player called or raised preflop. Blinds excluded. High = loose range.' },
   { abbr: 'PFR', full: 'Preflop Raise %', desc: '% of hands with a preflop raise. Always ≤ VPIP. High = aggressive preflop player.' },
@@ -125,17 +132,29 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
           <div className="value">{playerList.length}</div>
         </div>
         <div className="stat-card">
-          <div className="label">Biggest Winner</div>
-          <div className="value pos">
-            {playerList[0] ? `${playerList[0].name.split(' ')[0]} +${playerList[0].netChips}` : '—'}
-          </div>
+          {(() => {
+            const top = playerList[0];
+            // playerList is sorted by netChips desc, but if no one is positive
+            // the "winner" is just the least-bad finisher — relabel + restyle so
+            // the card doesn't claim "Biggest Winner: Peter +-400".
+            const isWinner = top && top.netChips > 0;
+            const valueClass = !top ? '' : isWinner ? 'pos' : 'neg';
+            return (
+              <>
+                <div className="label">{isWinner ? 'Biggest Winner' : 'Top Finisher'}</div>
+                <div className={`value ${valueClass}`}>
+                  {top ? `${top.name.split(' ')[0]} ${formatNet(top.netChips)}` : '—'}
+                </div>
+              </>
+            );
+          })()}
         </div>
         <div className="stat-card">
           <div className="label">Biggest Loser</div>
           <div className="value neg">
             {(() => {
               const loser = [...playerList].sort((a, b) => a.netChips - b.netChips)[0];
-              return loser ? `${loser.name.split(' ')[0]} ${loser.netChips}` : '—';
+              return loser ? `${loser.name.split(' ')[0]} ${formatNet(loser.netChips)}` : '—';
             })()}
           </div>
         </div>
@@ -185,7 +204,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
       {/* Leaderboard */}
       <div className="section-title">Leaderboard</div>
       <div className="chart-card">
-        <Leaderboard players={playerList} onSelect={setSelectedPlayer} selected={selectedPlayer} />
+        <Leaderboard players={playerList} onSelect={setSelectedPlayer} selected={playerList[0]?.name || null} />
       </div>
     </>
   );
