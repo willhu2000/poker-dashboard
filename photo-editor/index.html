@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photo Compressor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a1a;
+  min-height: 100vh;
+  padding: 48px 20px 80px;
+}
+
+.container {
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+  letter-spacing: -0.3px;
+}
+
+.subtitle {
+  color: #6b7280;
+  margin-bottom: 36px;
+  font-size: 0.95rem;
+}
+
+/* Drop Zone */
+.drop-zone {
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  background: white;
+  padding: 52px 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+  margin-bottom: 36px;
+  user-select: none;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: #4f7df7;
+  background: #f5f8ff;
+}
+
+.upload-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 16px;
+  color: #9ca3af;
+}
+
+.drop-zone:hover .upload-icon,
+.drop-zone.drag-over .upload-icon {
+  color: #4f7df7;
+}
+
+.drop-zone h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #374151;
+}
+
+.drop-zone p {
+  color: #9ca3af;
+  font-size: 0.88rem;
+}
+
+.browse-link {
+  color: #4f7df7;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+#fileInput { display: none; }
+
+/* Results */
+#resultsSection { display: none; }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.section-header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 18px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s, opacity 0.15s;
+  text-decoration: none;
+}
+
+.btn-primary { background: #4f7df7; color: white; }
+.btn-primary:hover { background: #3a69e5; }
+
+.btn-ghost { background: #f1f5f9; color: #374151; }
+.btn-ghost:hover { background: #e2e8f0; }
+
+.btn-sm { padding: 5px 12px; font-size: 0.8rem; }
+
+/* File Cards */
+#results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.file-card {
+  background: white;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-left: 4px solid transparent;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+}
+
+.file-card.processing { border-left-color: #f59e0b; }
+.file-card.done       { border-left-color: #22c55e; }
+.file-card.skipped    { border-left-color: #94a3b8; }
+.file-card.error      { border-left-color: #ef4444; }
+
+.file-info { flex: 1; min-width: 0; }
+
+.file-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+
+.file-meta {
+  font-size: 0.79rem;
+  color: #6b7280;
+}
+
+.file-action { flex-shrink: 0; }
+
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge-processing { background: #fef3c7; color: #92400e; }
+.badge-done       { background: #dcfce7; color: #14532d; }
+.badge-skipped    { background: #f1f5f9; color: #64748b; }
+.badge-error      { background: #fee2e2; color: #7f1d1d; }
+
+/* Indeterminate progress bar */
+.progress-wrap {
+  height: 3px;
+  background: #f0f0f0;
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 45%;
+  background: #f59e0b;
+  border-radius: 2px;
+  animation: slide 1.1s ease-in-out infinite;
+}
+
+@keyframes slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* Bottom bar */
+.bottom-bar {
+  display: none;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e5e7eb;
+  gap: 12px;
+  align-items: center;
+}
+
+.bottom-bar.visible { display: flex; }
+
+/* Target size input */
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.target-row label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.target-input {
+  width: 90px;
+  padding: 7px 12px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: #1a1a1a;
+  background: white;
+  transition: border-color 0.15s;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.target-input::-webkit-inner-spin-button,
+.target-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; }
+
+.target-input:focus {
+  outline: none;
+  border-color: #4f7df7;
+}
+
+.target-unit {
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Photo Compressor</h1>
+  <p class="subtitle">Compress JPG files down to a target size — aspect ratio preserved.</p>
+
+  <div class="target-row">
+    <label for="targetMB">Target size</label>
+    <input type="number" id="targetMB" class="target-input" placeholder="20" min="1" max="9999">
+    <span class="target-unit">MB (leave blank for 20 MB)</span>
+  </div>
+
+  <div class="drop-zone" id="dropZone">
+    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <h2>Drop JPG files here</h2>
+    <p>or <span class="browse-link" id="browseLink">browse files</span></p>
+    <input type="file" id="fileInput" accept=".jpg,.jpeg" multiple>
+  </div>
+
+  <div id="resultsSection">
+    <div class="section-header">
+      <h3 id="resultsTitle">Files</h3>
+      <button class="btn btn-ghost btn-sm" onclick="clearAll()">Clear all</button>
+    </div>
+    <div id="results"></div>
+    <div class="bottom-bar" id="bottomBar">
+      <button class="btn btn-primary" onclick="downloadAll()">Download All Processed</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const DEFAULT_MB = 20;
+const processedBlobs = []; // null = skipped/error, {blob, name} = ready
+
+function getTargetMB() {
+  const val = parseFloat(document.getElementById('targetMB').value);
+  return (Number.isFinite(val) && val > 0) ? val : DEFAULT_MB;
+}
+
+function getTargetBytes() {
+  return getTargetMB() * 1024 * 1024;
+}
+
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  return (bytes / 1024).toFixed(1) + ' KB';
+}
+
+function outputName(filename) {
+  const dot = filename.lastIndexOf('.');
+  const base = dot > 0 ? filename.slice(0, dot) : filename;
+  return base + getTargetMB() + 'MB.jpg';
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not decode image'));
+    img.src = url;
+  });
+}
+
+function toBlob(canvas, quality) {
+  return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+}
+
+async function compressTo20MB(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    for (let s = 10; s >= 1; s--) {
+      const scale = s / 10;
+      canvas.width  = Math.max(1, Math.round(img.naturalWidth  * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // Seed the binary search near the expected answer so it converges faster.
+      // Rough estimate: quality scales linearly with size ratio, adjusted for
+      // any dimension reduction already applied at this scale.
+      const areaRatio = (scale * scale); // relative to original pixel count
+      const sizeRatio = (getTargetBytes() / file.size) / areaRatio;
+      const seedQuality = Math.min(0.92, Math.max(0.01, sizeRatio * 0.88));
+
+      // 8 iterations gives ±0.004 quality precision — more than enough.
+      let lo = 0.01, hi = 0.92, best = null, q = seedQuality;
+      for (let i = 0; i < 8; i++) {
+        const blob = await toBlob(canvas, q);
+        if (blob.size <= getTargetBytes()) { best = blob; lo = q; }
+        else                           { hi = q; }
+        q = (lo + hi) / 2;
+      }
+
+      if (best) return best;
+    }
+
+    // Extreme fallback: tiny dimensions
+    canvas.width  = Math.max(1, Math.round(img.naturalWidth  * 0.05));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * 0.05));
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await toBlob(canvas, 0.9);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// --- UI helpers ---
+
+function cardEl(index) { return document.getElementById('card-' + index); }
+
+function addCard(file, index) {
+  const div = document.createElement('div');
+  div.className = 'file-card processing';
+  div.id = 'card-' + index;
+  div.innerHTML = `
+    <div class="file-info">
+      <div class="file-name" title="${file.name}">${file.name}</div>
+      <div class="file-meta">Original size: ${fmtSize(file.size)}</div>
+      <div class="progress-wrap"><div class="progress-bar"></div></div>
+    </div>
+    <div class="file-action">
+      <span class="badge badge-processing">Processing…</span>
+    </div>`;
+  document.getElementById('results').appendChild(div);
+}
+
+function markDone(index, file, blob, name) {
+  const card = cardEl(index);
+  card.className = 'file-card done';
+  const blobUrl = URL.createObjectURL(blob);
+  card.innerHTML = `
+    <div class="file-info">
+      <div class="file-name" title="${name}">${name}</div>
+      <div class="file-meta">${fmtSize(file.size)} &rarr; ${fmtSize(blob.size)}</div>
+    </div>
+    <div class="file-action">
+      <a class="btn btn-primary btn-sm" href="${blobUrl}" download="${name}">Download</a>
+    </div>`;
+}
+
+function markSkipped(index, file) {
+  const card = cardEl(index);
+  card.className = 'file-card skipped';
+  card.innerHTML = `
+    <div class="file-info">
+      <div class="file-name" title="${file.name}">${file.name}</div>
+      <div class="file-meta">${fmtSize(file.size)} — already 20 MB or smaller, no processing needed</div>
+    </div>
+    <div class="file-action">
+      <span class="badge badge-skipped">Skipped</span>
+    </div>`;
+}
+
+function markError(index, file, err) {
+  const card = cardEl(index);
+  card.className = 'file-card error';
+  card.innerHTML = `
+    <div class="file-info">
+      <div class="file-name" title="${file.name}">${file.name}</div>
+      <div class="file-meta">Error: ${err.message}</div>
+    </div>
+    <div class="file-action">
+      <span class="badge badge-error">Error</span>
+    </div>`;
+}
+
+function updateHeader() {
+  const total = processedBlobs.length;
+  const done  = processedBlobs.filter(x => x).length;
+  document.getElementById('resultsTitle').textContent =
+    `Files (${done} of ${total} processed)`;
+  const bar = document.getElementById('bottomBar');
+  if (done > 0) bar.classList.add('visible');
+  else bar.classList.remove('visible');
+}
+
+// --- Main processing ---
+
+async function processFiles(files) {
+  document.getElementById('resultsSection').style.display = 'block';
+  const startIdx = processedBlobs.length;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const idx  = startIdx + i;
+    addCard(file, idx);
+
+    try {
+      if (file.size <= getTargetBytes()) {
+        markSkipped(idx, file);
+        processedBlobs.push(null);
+      } else {
+        const blob = await compressTo20MB(file);
+        const name = outputName(file.name);
+        markDone(idx, file, blob, name);
+        processedBlobs.push({ blob, name });
+      }
+    } catch (err) {
+      markError(idx, file, err);
+      processedBlobs.push(null);
+    }
+
+    updateHeader();
+  }
+}
+
+async function downloadAll() {
+  const valid = processedBlobs.filter(Boolean);
+  for (const { blob, name } of valid) {
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    await new Promise(r => setTimeout(r, 250));
+    URL.revokeObjectURL(url);
+  }
+}
+
+function clearAll() {
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('resultsSection').style.display = 'none';
+  document.getElementById('bottomBar').classList.remove('visible');
+  processedBlobs.length = 0;
+}
+
+// --- Event wiring ---
+
+const dropZone  = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+document.getElementById('browseLink').addEventListener('click', e => {
+  e.stopPropagation();
+  fileInput.click();
+});
+
+dropZone.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', e => {
+  const files = Array.from(e.target.files);
+  if (files.length) processFiles(files);
+  e.target.value = '';
+});
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', e => {
+  if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('drag-over');
+});
+
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const files = Array.from(e.dataTransfer.files).filter(f =>
+    f.type === 'image/jpeg' ||
+    f.name.toLowerCase().endsWith('.jpg') ||
+    f.name.toLowerCase().endsWith('.jpeg')
+  );
+  if (files.length) processFiles(files);
+});
+</script>
+</body>
+</html>
