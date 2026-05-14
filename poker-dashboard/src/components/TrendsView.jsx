@@ -1,0 +1,248 @@
+import { useMemo, useState } from 'react';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+  ReferenceLine, CartesianGrid,
+} from 'recharts';
+
+const COLORS = ['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a29bfe','#55efc4','#fdcb6e','#e17055','#74b9ff'];
+
+const SMALL_SAMPLE_THRESHOLD = 20; // hands dealt per session below which a marker is "noisy"
+
+const METRICS = [
+  { key: 'vpip',     label: 'VPIP %',   domain: [0, 100], improveDir: 'down', why: 'Lower VPIP = tighter range. Most casual players bleed chips by playing too many hands.' },
+  { key: 'pfr',      label: 'PFR %',    domain: [0, 100], improveDir: 'up',   why: 'Higher PFR (within VPIP) = more aggressive entries. Limping is generally weaker than raising.' },
+  { key: 'af',       label: 'AF',       domain: [0, 'auto'], improveDir: 'up', why: 'Higher AF = more bets/raises vs calls postflop. Aggression wins pots without showdown.' },
+  { key: 'winRate',  label: 'Win %',    domain: [0, 'auto'], improveDir: 'up', why: '% of dealt hands you collected the pot.' },
+  { key: 'netChips', label: 'Net Chips', domain: ['auto', 'auto'], improveDir: 'up', why: 'Bottom line per session.' },
+];
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-');
+  return `${m}-${d}`;
+}
+
+function delta(first, last) {
+  if (first == null || last == null) return null;
+  return +(last - first).toFixed(2);
+}
+
+function arrow(delta, dir) {
+  if (delta == null || delta === 0) return { sym: '→', color: 'var(--muted)' };
+  const improving = (dir === 'up' && delta > 0) || (dir === 'down' && delta < 0);
+  return improving
+    ? { sym: delta > 0 ? '↑' : '↓', color: 'var(--win)' }
+    : { sym: delta > 0 ? '↑' : '↓', color: 'var(--lose)' };
+}
+
+const Tip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="custom-tooltip">
+      <div className="label">{label}</div>
+      {payload.map(p => (
+        <div key={p.dataKey} style={{ color: p.color }}>
+          {p.dataKey}: {p.value == null ? '—' : (typeof p.value === 'number' ? p.value.toFixed(p.value % 1 === 0 ? 0 : 1) : p.value)}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export default function TrendsView({ sessions, onBack }) {
+  // Sessions come newest-first from loadSessions(); sort ascending by gameDate.
+  const orderedSessions = useMemo(() => {
+    return [...sessions].sort((a, b) => {
+      const da = a.gameDate || a.uploadedAt;
+      const db = b.gameDate || b.uploadedAt;
+      return da.localeCompare(db);
+    });
+  }, [sessions]);
+
+  // Aggregate hands-played per player across all sessions (for default selection).
+  const allPlayers = useMemo(() => {
+    const totals = {};
+    for (const s of orderedSessions) {
+      for (const [name, sp] of Object.entries(s.stats?.players || {})) {
+        totals[name] = (totals[name] || 0) + (sp.handsDealt || 0);
+      }
+    }
+    return Object.entries(totals)
+      .map(([name, hands]) => ({ name, hands }))
+      .sort((a, b) => b.hands - a.hands);
+  }, [orderedSessions]);
+
+  const [selected, setSelected] = useState(() => allPlayers.slice(0, 3).map(p => p.name));
+
+  const togglePlayer = (name) => {
+    setSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  };
+
+  // Build the per-session × per-metric series.
+  // Result: rows[i] = { date, [playerName]: number, [`${name}__small`]: bool }
+  const seriesByMetric = useMemo(() => {
+    const out = {};
+    for (const m of METRICS) {
+      out[m.key] = orderedSessions.map(s => {
+        const row = { date: fmtDate(s.gameDate), _date: s.gameDate };
+        for (const name of selected) {
+          const sp = s.stats?.players?.[name];
+          if (!sp || (sp.handsDealt || 0) === 0) {
+            row[name] = null;
+          } else {
+            row[name] = sp[m.key] ?? null;
+            if ((sp.handsDealt || 0) < SMALL_SAMPLE_THRESHOLD) row[`${name}__small`] = true;
+          }
+        }
+        return row;
+      });
+    }
+    return out;
+  }, [orderedSessions, selected]);
+
+  // First→last delta per (player, metric), skipping sessions where the player wasn't dealt in.
+  const movement = useMemo(() => {
+    const rows = [];
+    for (const name of selected) {
+      const valuesByMetric = {};
+      for (const m of METRICS) valuesByMetric[m.key] = [];
+      for (const s of orderedSessions) {
+        const sp = s.stats?.players?.[name];
+        if (!sp || (sp.handsDealt || 0) === 0) continue;
+        for (const m of METRICS) {
+          const v = sp[m.key];
+          if (v != null && !Number.isNaN(v)) valuesByMetric[m.key].push(v);
+        }
+      }
+      const deltas = {};
+      let sessionsPlayed = 0;
+      for (const m of METRICS) {
+        const arr = valuesByMetric[m.key];
+        deltas[m.key] = arr.length >= 2 ? delta(arr[0], arr[arr.length - 1]) : null;
+        sessionsPlayed = Math.max(sessionsPlayed, arr.length);
+      }
+      rows.push({ name, sessionsPlayed, deltas });
+    }
+    return rows;
+  }, [orderedSessions, selected]);
+
+  if (orderedSessions.length < 2) {
+    return (
+      <div>
+        <button className="btn btn-ghost" style={{ marginBottom: 16 }} onClick={onBack}>← Sessions</button>
+        <h1>📈 Trends</h1>
+        <p style={{ color: 'var(--muted)', marginTop: 14 }}>
+          You need at least 2 saved sessions to see trends. Upload another CSV to start tracking improvement.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="dashboard-header">
+        <div>
+          <button className="btn btn-ghost" style={{ marginBottom: 8, fontSize: '0.82rem', padding: '6px 14px' }} onClick={onBack}>
+            ← Sessions
+          </button>
+          <h1>📈 Trends Over Time</h1>
+          <div className="meta">
+            {orderedSessions.length} sessions · {selected.length} player{selected.length !== 1 ? 's' : ''} selected
+          </div>
+        </div>
+      </div>
+
+      <div className="trends-picker">
+        <div className="trends-picker-label">Compare players:</div>
+        <div className="trends-picker-chips">
+          {allPlayers.map((p, i) => {
+            const isSel = selected.includes(p.name);
+            const color = COLORS[allPlayers.findIndex(x => x.name === p.name) % COLORS.length];
+            return (
+              <button
+                key={p.name}
+                className={`trend-chip ${isSel ? 'active' : ''}`}
+                onClick={() => togglePlayer(p.name)}
+                style={isSel ? { borderColor: color, background: `${color}22` } : {}}
+              >
+                <span className="trend-chip-dot" style={{ background: isSel ? color : 'transparent', borderColor: color }} />
+                {p.name} <span style={{ color: 'var(--muted)', marginLeft: 6 }}>· {p.hands}h</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="charts-grid">
+        {METRICS.map(m => (
+          <div key={m.key} className="chart-card">
+            <h3 style={{ margin: '0 0 4px' }}>{m.label}</h3>
+            <p style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: 8 }}>{m.why}</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={seriesByMetric[m.key]} margin={{ top: 6, right: 12, left: -10, bottom: 6 }}>
+                <CartesianGrid stroke="#2e3350" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: '#7c82a0', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#7c82a0', fontSize: 11 }} domain={m.domain} />
+                <Tooltip content={<Tip />} />
+                {m.key === 'netChips' && <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />}
+                {selected.map((name) => {
+                  const idx = allPlayers.findIndex(x => x.name === name);
+                  const color = COLORS[idx % COLORS.length];
+                  return (
+                    <Line
+                      key={name}
+                      type="monotone"
+                      dataKey={name}
+                      stroke={color}
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      activeDot={{ r: 5 }}
+                      connectNulls
+                      isAnimationActive={false}
+                    />
+                  );
+                })}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ))}
+      </div>
+
+      <div className="chart-card" style={{ marginTop: 20 }}>
+        <h3 style={{ marginBottom: 12 }}>Movement (first session → last session)</h3>
+        <p style={{ color: 'var(--muted)', fontSize: '0.78rem', marginBottom: 10 }}>
+          Green = trending in the direction most players want (lower VPIP, higher PFR/AF/Win%/Net). Sessions with fewer than {SMALL_SAMPLE_THRESHOLD} hands dealt per player are noisy — read deltas with caution.
+        </p>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="hand-table">
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Sessions</th>
+                {METRICS.map(m => <th key={m.key}>Δ {m.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {movement.map(r => (
+                <tr key={r.name}>
+                  <td style={{ fontWeight: 600 }}>{r.name}</td>
+                  <td style={{ color: 'var(--muted)' }}>{r.sessionsPlayed}</td>
+                  {METRICS.map(m => {
+                    const d = r.deltas[m.key];
+                    if (d == null) return <td key={m.key} style={{ color: 'var(--muted)' }}>—</td>;
+                    const a = arrow(d, m.improveDir);
+                    return (
+                      <td key={m.key} style={{ color: a.color, whiteSpace: 'nowrap' }}>
+                        {a.sym} {d > 0 ? '+' : ''}{d}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}

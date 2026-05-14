@@ -316,7 +316,6 @@ const SUCKOUT_NONE = [
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PlayerDetail({ player: p, isMerged = false }) {
-  const [showGrid, setShowGrid] = useState(false);
   const [showRadarInfo, setShowRadarInfo] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [handFilter, setHandFilter] = useState('all');
@@ -496,61 +495,55 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
           )}
         </div>
 
-        {/* Hand categories — pie or range grid */}
-        {(catData.length > 0 || hasRange) && (
+        {/* Hand categories — pie chart of shown/known hands */}
+        {catData.length > 0 && (
           <div className="chart-card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <h3 style={{ margin: 0 }}>{showGrid ? 'Preflop Range Grid' : 'Hand Categories (shown/known)'}</h3>
-              {hasRange && (
-                <button onClick={() => setShowGrid(g => !g)}
-                  style={{ fontSize: '0.72rem', padding: '3px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', cursor: 'pointer' }}>
-                  {showGrid ? 'Pie Chart' : 'Range Grid'}
-                </button>
-              )}
-            </div>
-            {showGrid ? (
-              <RangeGrid rangeHands={p.rangeHands || []} />
-            ) : (
-              <>
-                <p style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: 6 }}>
-                  Click a slice or legend item to see all hands in that category.
-                </p>
-                <ResponsiveContainer width="100%" height={280}>
-                  <PieChart margin={{ top: 16, right: 0, bottom: 0, left: 0 }}>
-                    <Pie
-                      data={catData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="42%"
-                      outerRadius={85}
-                      onClick={(d) => toggleCategory(d.name)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      {catData.map((entry, i) => (
-                        <Cell
-                          key={i}
-                          fill={COLORS[i % COLORS.length]}
-                          opacity={selectedCategory && selectedCategory !== entry.name ? 0.35 : 1}
-                          stroke={selectedCategory === entry.name ? '#fff' : 'transparent'}
-                          strokeWidth={selectedCategory === entry.name ? 2 : 0}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip content={<PieTip />} />
-                    <Legend
-                      wrapperStyle={{ fontSize: 11, color: '#7c82a0', paddingTop: 14, cursor: 'pointer' }}
-                      onClick={(d) => toggleCategory(d.value)}
-                      formatter={(value) => (
-                        <span style={{ color: selectedCategory === value ? 'var(--text)' : 'var(--muted)', fontWeight: selectedCategory === value ? 700 : 400 }}>
-                          {value}
-                        </span>
-                      )}
+            <h3 style={{ margin: '0 0 8px' }}>Hand Categories (shown/known)</h3>
+            <p style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: 6 }}>
+              Click a slice or legend item to see all hands in that category.
+            </p>
+            <ResponsiveContainer width="100%" height={280}>
+              <PieChart margin={{ top: 16, right: 0, bottom: 0, left: 0 }}>
+                <Pie
+                  data={catData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="42%"
+                  outerRadius={85}
+                  onClick={(d) => toggleCategory(d.name)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {catData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={COLORS[i % COLORS.length]}
+                      opacity={selectedCategory && selectedCategory !== entry.name ? 0.35 : 1}
+                      stroke={selectedCategory === entry.name ? '#fff' : 'transparent'}
+                      strokeWidth={selectedCategory === entry.name ? 2 : 0}
                     />
-                  </PieChart>
-                </ResponsiveContainer>
-              </>
-            )}
+                  ))}
+                </Pie>
+                <Tooltip content={<PieTip />} />
+                <Legend
+                  wrapperStyle={{ fontSize: 11, color: '#7c82a0', paddingTop: 14, cursor: 'pointer' }}
+                  onClick={(d) => toggleCategory(d.value)}
+                  formatter={(value) => (
+                    <span style={{ color: selectedCategory === value ? 'var(--text)' : 'var(--muted)', fontWeight: selectedCategory === value ? 700 : 400 }}>
+                      {value}
+                    </span>
+                  )}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Preflop range grid (independent card now — used to share a toggle with the pie) */}
+        {hasRange && (
+          <div className="chart-card">
+            <h3 style={{ margin: '0 0 8px' }}>Preflop Range Grid</h3>
+            <RangeGrid rangeHands={p.rangeHands || []} />
           </div>
         )}
       </div>

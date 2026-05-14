@@ -53,6 +53,14 @@ export function analyseLog(rows) {
         netChips: 0,
         buyIns: 0,
         cashOut: 0,
+        // Final standings need this when the log ends with the player still seated:
+        // PokerNow only emits a `quits the game with stack of N` event when a player
+        // actually leaves. For everyone else `cashOut` stays at 0 and net = -buyIns.
+        // We snapshot `lastSeenStack` from each `Player stacks:` line and add it back
+        // in `effectiveCashOut` if the player has not quit since their most recent buy-in.
+        lastSeenStack: 0,
+        lastBuyInOrder: -1,
+        lastQuitOrder: -1,
         // street actions
         streetActions: { preflop: 0, flop: 0, turn: 0, river: 0 },
         // luck proxy: premium hands shown at showdown
@@ -282,13 +290,17 @@ export function analyseLog(rows) {
     // ── Buy-ins / cash-outs (can happen between hands, so check before guard) ──
     const joinMatch = e.match(/^The player "(.+?)" joined the game with a stack of (\d+)/);
     if (joinMatch) {
-      getPlayer(extractName(joinMatch[1])).buyIns += parseInt(joinMatch[2], 10);
+      const p = getPlayer(extractName(joinMatch[1]));
+      p.buyIns += parseInt(joinMatch[2], 10);
+      p.lastBuyInOrder = row.order;
       continue;
     }
 
     const quitMatch = e.match(/^The player "(.+?)" quits the game with a stack of (\d+)/);
     if (quitMatch) {
-      getPlayer(extractName(quitMatch[1])).cashOut += parseInt(quitMatch[2], 10);
+      const p = getPlayer(extractName(quitMatch[1]));
+      p.cashOut += parseInt(quitMatch[2], 10);
+      p.lastQuitOrder = row.order;
       continue;
     }
 
@@ -309,7 +321,10 @@ export function analyseLog(rows) {
         const m = part.match(/^#\d+ "(.+)" \((\d+)\)$/);
         if (m) {
           const name = extractName(m[1]);
-          currentHand.players[name] = { stack: parseInt(m[2], 10) };
+          const stack = parseInt(m[2], 10);
+          currentHand.players[name] = { stack };
+          // Snapshot for end-of-log "still seated" cash-out fallback (see field comment).
+          getPlayer(name).lastSeenStack = stack;
         }
       }
       continue;
@@ -469,7 +484,9 @@ export function analyseLog(rows) {
       ? +((p.totalBetsRaises) / p.totalCalls).toFixed(2)
       : p.totalBetsRaises > 0 ? 99 : 0;
 
-    p.netChips = p.cashOut - p.buyIns;
+    const stillSeated = p.lastBuyInOrder > p.lastQuitOrder;
+    p.effectiveCashOut = p.cashOut + (stillSeated ? p.lastSeenStack : 0);
+    p.netChips = p.effectiveCashOut - p.buyIns;
 
     p.luckiness = p.allHandsShown > 0
       ? +(p.premiumHandsShown / p.allHandsShown * 100).toFixed(1)

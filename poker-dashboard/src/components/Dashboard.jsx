@@ -10,6 +10,56 @@ function formatNet(n) {
   return `${n}`;
 }
 
+// Deterministic avatar color from the player name so the same player keeps the
+// same swatch across renders (and across different cards on the same page).
+const AVATAR_PALETTE = ['#6c63ff', '#00d4aa', '#ffd166', '#ff6b6b', '#a29bfe', '#74b9ff', '#fdcb6e', '#e17055'];
+function avatarColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+}
+function avatarInitials(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+function HeroCard({ kind, label, player, valueText, sub }) {
+  if (!player) {
+    return (
+      <div className={`hero-card ${kind}`}>
+        <div className="hero-body">
+          <div className="hero-label">{label}</div>
+          <div className="hero-name">—</div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className={`hero-card ${kind}`}>
+      <div className="hero-avatar" style={{ background: avatarColor(player.name) }}>
+        {avatarInitials(player.name)}
+      </div>
+      <div className="hero-body">
+        <div className="hero-label">{label}</div>
+        <div className="hero-name" title={player.name}>{player.name}</div>
+        <div className={`hero-value ${kind === 'win' ? 'pos' : 'neg'}`}>{valueText}</div>
+        {sub && <div className="hero-sub">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+function MetaChip({ icon, label, value }) {
+  return (
+    <div className="meta-chip">
+      <div className="meta-chip-icon" aria-hidden>{icon}</div>
+      <div className="meta-chip-body">
+        <div className="meta-chip-label">{label}</div>
+        <div className="meta-chip-value" title={value}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
 const GLOSSARY = [
   { abbr: 'VPIP', full: 'Voluntarily Put $ In Pot', desc: '% of hands where a player called or raised preflop. Blinds excluded. High = loose range.' },
   { abbr: 'PFR', full: 'Preflop Raise %', desc: '% of hands with a preflop raise. Always ≤ VPIP. High = aggressive preflop player.' },
@@ -47,7 +97,7 @@ function GlossaryPanel() {
   );
 }
 
-export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], onBack, onViewMerged, onUpdateSessions, onAddSession, error }) {
+export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], onBack, onViewMerged, onViewTrends, onUpdateSessions, onAddSession, error }) {
   const { players, handCount } = data;
   const playerList = Object.values(players).sort((a, b) => b.netChips - a.netChips);
   const [selectedPlayer, setSelectedPlayer] = useState(playerList[0]?.name || null);
@@ -110,6 +160,11 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
               ⚡ View All {sessionCount} Sessions
             </button>
           )}
+          {sessionCount >= 2 && onViewTrends && (
+            <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={onViewTrends}>
+              📈 Trends
+            </button>
+          )}
           <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={() => addInputRef.current.click()}>
             + Add Session
           </button>
@@ -121,62 +176,49 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
 
       <GlossaryPanel />
 
-      {/* Overview stat cards */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="label">Hands Played</div>
-          <div className="value">{handCount}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Players</div>
-          <div className="value">{playerList.length}</div>
-        </div>
-        <div className="stat-card">
-          {(() => {
-            const top = playerList[0];
-            // playerList is sorted by netChips desc, but if no one is positive
-            // the "winner" is just the least-bad finisher — relabel + restyle so
-            // the card doesn't claim "Biggest Winner: Peter +-400".
-            const isWinner = top && top.netChips > 0;
-            const valueClass = !top ? '' : isWinner ? 'pos' : 'neg';
-            return (
-              <>
-                <div className="label">{isWinner ? 'Biggest Winner' : 'Top Finisher'}</div>
-                <div className={`value ${valueClass}`}>
-                  {top ? `${top.name.split(' ')[0]} ${formatNet(top.netChips)}` : '—'}
-                </div>
-              </>
-            );
-          })()}
-        </div>
-        <div className="stat-card">
-          <div className="label">Biggest Loser</div>
-          <div className="value neg">
-            {(() => {
-              const loser = [...playerList].sort((a, b) => a.netChips - b.netChips)[0];
-              return loser ? `${loser.name.split(' ')[0]} ${formatNet(loser.netChips)}` : '—';
-            })()}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Most Aggressive</div>
-          <div className="value" style={{ fontSize: '1.1rem' }}>
-            {(() => {
-              const p = [...playerList].sort((a, b) => b.af - a.af)[0];
-              return p ? `${p.name.split(' ')[0]} (AF ${p.af})` : '—';
-            })()}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Tightest Player</div>
-          <div className="value" style={{ fontSize: '1.1rem' }}>
-            {(() => {
-              const p = [...playerList].filter(x => x.handsDealt >= 5).sort((a, b) => a.vpip - b.vpip)[0];
-              return p ? `${p.name.split(' ')[0]} (${p.vpip}%)` : '—';
-            })()}
-          </div>
-        </div>
-      </div>
+      {/* Overview — hero cards (top/bottom finishers) + meta chips */}
+      {(() => {
+        const top = playerList[0]; // sorted by netChips desc
+        const loser = playerList.length > 0 ? playerList[playerList.length - 1] : null;
+        const mostAgg = [...playerList].sort((a, b) => b.af - a.af)[0];
+        const tightest = [...playerList].filter(x => x.handsDealt >= 5).sort((a, b) => a.vpip - b.vpip)[0];
+        const topIsWinner = top && top.netChips > 0;
+        const heroSub = (p) => p ? `${p.handsDealt} hands · ${p.vpip}% VPIP` : null;
+        return (
+          <>
+            <div className="hero-grid">
+              <HeroCard
+                kind={topIsWinner ? 'win' : 'lose'}
+                label={topIsWinner ? 'Biggest Winner' : 'Top Finisher'}
+                player={top}
+                valueText={top ? formatNet(top.netChips) : '—'}
+                sub={heroSub(top)}
+              />
+              <HeroCard
+                kind="lose"
+                label="Biggest Loser"
+                player={loser}
+                valueText={loser ? formatNet(loser.netChips) : '—'}
+                sub={heroSub(loser)}
+              />
+            </div>
+            <div className="meta-chip-row">
+              <MetaChip icon="🃏" label="Hands Played" value={handCount} />
+              <MetaChip icon="👥" label="Players" value={playerList.length} />
+              <MetaChip
+                icon="🔥"
+                label="Most Aggressive"
+                value={mostAgg ? `${mostAgg.name} · AF ${mostAgg.af}` : '—'}
+              />
+              <MetaChip
+                icon="🛡️"
+                label="Tightest Player"
+                value={tightest ? `${tightest.name} · ${tightest.vpip}% VPIP` : '—'}
+              />
+            </div>
+          </>
+        );
+      })()}
 
       {/* Overview charts */}
       <OverviewCharts players={playerList} />
@@ -204,7 +246,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
       {/* Leaderboard */}
       <div className="section-title">Leaderboard</div>
       <div className="chart-card">
-        <Leaderboard players={playerList} onSelect={setSelectedPlayer} selected={playerList[0]?.name || null} />
+        <Leaderboard players={playerList} onSelect={setSelectedPlayer} selected={selectedPlayer} />
       </div>
     </>
   );

@@ -1,11 +1,26 @@
 const KEY = 'poker-sessions';
 
+// Bump when the shape of the saved `stats` payload changes in a way that affects
+// derived numbers users see. We use this to flag stale localStorage sessions and
+// prompt re-upload rather than silently mutating historical numbers.
+//   v1: original (broken Net Chips when player still seated at log end)
+//   v2: tracks lastSeenStack / lastBuyInOrder / lastQuitOrder and effectiveCashOut
+export const STATS_SCHEMA_VERSION = 2;
+
 export function loadSessions() {
   try {
     return JSON.parse(localStorage.getItem(KEY) || '[]');
   } catch {
     return [];
   }
+}
+
+export function hasOutdatedSessions() {
+  return loadSessions().some(s => (s.schemaVersion || 1) < STATS_SCHEMA_VERSION);
+}
+
+export function clearAllSessions() {
+  localStorage.removeItem(KEY);
 }
 
 function genId() {
@@ -27,6 +42,7 @@ export function saveSession(fileName, stats, gameDate = null, contentHash = null
     handCount: stats.handCount,
     playerNames: Object.keys(stats.players),
     contentHash,
+    schemaVersion: STATS_SCHEMA_VERSION,
     stats,
   });
   localStorage.setItem(KEY, JSON.stringify(sessions));
@@ -75,7 +91,7 @@ export function mergeSessions(sessions) {
           handsDealt: 0, vpipHands: 0, pfrHands: 0, preflopFolds: 0,
           totalBetsRaises: 0, totalCalls: 0, totalChecks: 0,
           shownHands: [], handCategories: {},
-          netChips: 0, buyIns: 0, cashOut: 0,
+          netChips: 0, buyIns: 0, cashOut: 0, effectiveCashOut: 0,
           streetActions: { preflop: 0, flop: 0, turn: 0, river: 0 },
           premiumHandsShown: 0, allHandsShown: 0,
           handsWon: 0, potsWon: 0,
@@ -98,6 +114,10 @@ export function mergeSessions(sessions) {
       p.handsWon        += sp.handsWon || 0;
       p.buyIns          += sp.buyIns || 0;
       p.cashOut         += sp.cashOut || 0;
+      // effectiveCashOut from each session already includes that session's
+      // still-seated final-stack fallback; just sum it. Fall back to cashOut for
+      // pre-v2 stats payloads (handled separately by the outdated-session banner).
+      p.effectiveCashOut += (sp.effectiveCashOut != null ? sp.effectiveCashOut : sp.cashOut) || 0;
       p.shownHands    = p.shownHands.concat(sp.shownHands || []);
       p.rangeHands    = p.rangeHands.concat(sp.rangeHands || []);
       // Tag hands with session metadata as we concat
@@ -125,7 +145,7 @@ export function mergeSessions(sessions) {
     p.af = p.totalCalls > 0
       ? +(p.totalBetsRaises / p.totalCalls).toFixed(2)
       : p.totalBetsRaises > 0 ? 99 : 0;
-    p.netChips  = p.cashOut - p.buyIns;
+    p.netChips  = p.effectiveCashOut - p.buyIns;
     p.luckiness = p.allHandsShown > 0
       ? +(p.premiumHandsShown / p.allHandsShown * 100).toFixed(1)
       : 0;

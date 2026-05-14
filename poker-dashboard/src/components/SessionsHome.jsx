@@ -1,10 +1,11 @@
 import { useCallback, useRef } from 'react';
+import { hasOutdatedSessions, clearAllSessions } from '../sessions.js';
 
 function fmt(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function SessionsHome({ sessions, onView, onViewMerged, onDelete, onNewFile, error }) {
+export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error }) {
   const inputRef = useRef(null);
   const draggingRef = useRef(false);
 
@@ -59,17 +60,50 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onDelete,
       </div>
 
       <div className="sessions-body">
-        {sessions.length >= 2 && (
-          <button className="merged-session-card" onClick={onViewMerged}>
-            <div className="merged-icon">⚡</div>
-            <div className="merged-info">
-              <div className="merged-title">All Sessions Combined</div>
-              <div className="merged-sub">
-                {sessions.length} sessions · {sessions.reduce((n, s) => n + s.handCount, 0)} total hands · view merged stats
-              </div>
+        {hasOutdatedSessions() && (
+          <div className="outdated-banner">
+            <div>
+              <strong>Some sessions have outdated stats.</strong>{' '}
+              Net Chips were computed before the still-seated fix. Re-upload those CSVs (or reset and let the bundled samples re-load) to get correct numbers.
             </div>
-            <div className="merged-arrow">→</div>
-          </button>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '0.82rem' }}
+              onClick={() => {
+                if (confirm('Reset will delete all stored sessions and reload the bundled samples. Continue?')) {
+                  clearAllSessions();
+                  location.reload();
+                }
+              }}
+            >
+              Reset
+            </button>
+          </div>
+        )}
+
+        {sessions.length >= 2 && (
+          <div className="merged-row">
+            <button className="merged-session-card" onClick={onViewMerged}>
+              <div className="merged-icon">⚡</div>
+              <div className="merged-info">
+                <div className="merged-title">All Sessions Combined</div>
+                <div className="merged-sub">
+                  {sessions.length} sessions · {sessions.reduce((n, s) => n + s.handCount, 0)} total hands · view merged stats
+                </div>
+              </div>
+              <div className="merged-arrow">→</div>
+            </button>
+            <button className="merged-session-card trends" onClick={onViewTrends}>
+              <div className="merged-icon">📈</div>
+              <div className="merged-info">
+                <div className="merged-title">Trends Over Time</div>
+                <div className="merged-sub">
+                  Compare players session-by-session — are you improving?
+                </div>
+              </div>
+              <div className="merged-arrow">→</div>
+            </button>
+          </div>
         )}
 
         <div
