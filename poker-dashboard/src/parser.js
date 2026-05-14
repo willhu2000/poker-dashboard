@@ -121,3 +121,19 @@ export function formatSessionName(date = new Date()) {
   const d = new Date(date);
   return `poker-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${d.getFullYear()}`;
 }
+
+// Scan parsed log rows for every player name that appears in the file.
+// Pulls names from any quoted "name @ tag" token, which covers joins, stacks,
+// dealer/blind announcements, actions, shows, and collects.
+export function extractPlayerNames(rows) {
+  const names = new Set();
+  const re = /"([^"]+?\s*@\s*\w+)"/g;
+  for (const row of rows) {
+    let m;
+    while ((m = re.exec(row.entry)) !== null) {
+      const name = extractName(m[1]);
+      if (name) names.add(name);
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}

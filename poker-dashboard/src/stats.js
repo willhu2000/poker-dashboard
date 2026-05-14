@@ -28,7 +28,11 @@ function emptyHand() {
 // Main analyser
 // ──────────────────────────────────────────────────────────────────────────────
 
-export function analyseLog(rows) {
+// `viewerName` (optional) is the name of the player who downloaded the log —
+// PokerNow emits `Your hand is …` from that player's perspective. When omitted,
+// we fall back to a heuristic that matches a player whose name starts with
+// "will" (used for the bundled sample logs that ship with the app).
+export function analyseLog(rows, viewerName = null) {
   const players = {};   // displayName → stats object
   let currentHand = null;
   let handCount = 0;
@@ -262,6 +266,8 @@ export function analyseLog(rows) {
   }
 
   function findViewerName(hand) {
+    if (viewerName && hand.players[viewerName]) return viewerName;
+    if (viewerName) return null; // explicit pick that's not seated this hand
     return Object.keys(hand.players).find(n => n.toLowerCase().startsWith('will'));
   }
 

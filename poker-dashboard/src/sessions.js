@@ -31,7 +31,7 @@ export function isDuplicate(contentHash) {
   return loadSessions().some(s => s.contentHash === contentHash);
 }
 
-export function saveSession(fileName, stats, gameDate = null, contentHash = null) {
+export function saveSession(fileName, stats, gameDate = null, contentHash = null, viewerName = null) {
   const sessions = loadSessions();
   const id = genId();
   sessions.unshift({
@@ -41,6 +41,7 @@ export function saveSession(fileName, stats, gameDate = null, contentHash = null
     uploadedAt: new Date().toISOString(),
     handCount: stats.handCount,
     playerNames: Object.keys(stats.players),
+    viewerName,
     contentHash,
     schemaVersion: STATS_SCHEMA_VERSION,
     stats,

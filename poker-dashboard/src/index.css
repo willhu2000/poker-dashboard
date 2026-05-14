@@ -856,3 +856,77 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
 .al-action { display:flex; gap:6px; padding:1px 0; }
 .al-player { font-weight:600; color:var(--text); min-width:90px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .al-verb { color:var(--muted); }
+
+/* ── Viewer-picker modal (post-upload "which player are you?" prompt) ── */
+.viewer-picker-overlay {
+  position: fixed; inset: 0;
+  background: rgba(8, 9, 14, 0.7);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+.viewer-picker-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 24px 20px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.viewer-picker-modal h2 {
+  font-size: 1.2rem;
+  margin-bottom: 8px;
+}
+.viewer-picker-sub {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+.viewer-picker-sub code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+.viewer-picker-file {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.viewer-picker-label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.viewer-picker-select {
+  width: 100%;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+.viewer-picker-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.viewer-picker-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 20px;
+}
+.viewer-picker-actions .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
