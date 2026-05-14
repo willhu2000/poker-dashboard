@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { classifyHand } from '../parser.js';
 import { bestHand } from '../handEval.js';
+import CoachingReport from './CoachingReport.jsx';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
   PieChart, Pie, Cell, Tooltip, Legend,
@@ -315,7 +316,7 @@ const SUCKOUT_NONE = [
 ];
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PlayerDetail({ player: p, isMerged = false }) {
+export default function PlayerDetail({ player: p, isMerged = false, isViewer = false }) {
   const [showRadarInfo, setShowRadarInfo] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [handFilter, setHandFilter] = useState('all');
@@ -547,6 +548,10 @@ export default function PlayerDetail({ player: p, isMerged = false }) {
           </div>
         )}
       </div>
+
+      {/* ── Coaching report (shown for every player; depth scales with how many
+           hole cards we know — full for the viewer, showdowns-only for others) ── */}
+      <CoachingReport player={p} isMerged={isMerged} isViewer={isViewer} />
 
       {/* ── Category drill-down ───────────────────────────────────────────────── */}
       {selectedCategory && (

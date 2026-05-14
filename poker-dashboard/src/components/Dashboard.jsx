@@ -97,7 +97,7 @@ function GlossaryPanel() {
   );
 }
 
-export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], onBack, onViewMerged, onViewTrends, onUpdateSessions, onAddSession, error }) {
+export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], viewerNames = [], onBack, onViewMerged, onViewTrends, onUpdateSessions, onAddSession, error }) {
   const { players, handCount } = data;
   const playerList = Object.values(players).sort((a, b) => b.netChips - a.netChips);
   const [selectedPlayer, setSelectedPlayer] = useState(playerList[0]?.name || null);
@@ -239,7 +239,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
         ))}
       </div>
 
-      {selected && <PlayerDetail player={selected} isMerged={isMerged} />}
+      {selected && <PlayerDetail player={selected} isMerged={isMerged} isViewer={viewerNames.includes(selected.name)} />}
 
       <hr className="divider" />
 

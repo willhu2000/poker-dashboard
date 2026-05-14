@@ -12,6 +12,20 @@ import ViewerPickerModal from './components/ViewerPickerModal.jsx';
 // when localStorage has no sessions yet.
 const AUTO_LOAD_LOGS = ['/log1.csv', '/log2.csv'];
 
+// The viewer is whichever player downloaded the log — the only person whose
+// hole cards we see on every dealt hand. We persist the pick on each session,
+// but older saves don't have it; fall back to the legacy "will*" heuristic so
+// the coaching report still surfaces for the bundled samples / pre-v3 saves.
+function resolveViewerNames(sessions, stats) {
+  const names = new Set();
+  for (const s of sessions) {
+    if (s.viewerName) names.add(s.viewerName);
+  }
+  if (names.size > 0) return [...names];
+  const fallback = Object.keys(stats.players).find(n => n.toLowerCase().startsWith('will'));
+  return fallback ? [fallback] : [];
+}
+
 export default function App() {
   const [sessions, setSessions] = useState(() => loadSessions());
   const [view, setView] = useState(null); // null | { type:'single', id } | { type:'merged', selectedIds:[] }
@@ -134,18 +148,20 @@ export default function App() {
 
   if (view) {
     const currentSessions = loadSessions();
-    let data, label, selectedIds;
+    let data, label, selectedIds, viewerNames;
     if (view.type === 'single') {
       const session = currentSessions.find(s => s.id === view.id);
       if (!session) { setView(null); return null; }
       data = session.stats;
       label = session.fileName;
       selectedIds = [view.id];
+      viewerNames = resolveViewerNames([session], data);
     } else {
       selectedIds = view.selectedIds && view.selectedIds.length > 0 ? view.selectedIds : currentSessions.map(s => s.id);
       const sessionsToMerge = currentSessions.filter(s => selectedIds.includes(s.id));
       data = mergeSessions(sessionsToMerge);
       label = `${selectedIds.length} of ${currentSessions.length} sessions merged`;
+      viewerNames = resolveViewerNames(sessionsToMerge, data);
     }
     if (!data) { setView(null); return null; }
 
@@ -158,6 +174,7 @@ export default function App() {
           sessionCount={currentSessions.length}
           selectedIds={selectedIds}
           allSessions={currentSessions}
+          viewerNames={viewerNames}
           onBack={() => setView(null)}
           onViewMerged={() => setView({ type: 'merged', selectedIds: currentSessions.map(s => s.id) })}
           onViewTrends={() => setView({ type: 'trends' })}
