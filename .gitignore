@@ -1,1 +1,4 @@
 /.claude
+# PokerNow session logs (keep locally, do not commit)
+poker_now_log_*.csv
+poker-dashboard/poker_now_log_*.csv
