@@ -36,6 +36,7 @@ export function analyseLog(rows, viewerName = null) {
   const players = {};   // displayName → stats object
   let currentHand = null;
   let handCount = 0;
+  const handActionLogs = {}; // hand number → actionLog (stored once, not per-player)
 
   function getPlayer(name) {
     if (!players[name]) {
@@ -81,6 +82,8 @@ export function analyseLog(rows, viewerName = null) {
         badBeats: [],
         // suck-outs (hands where this player won against a strong hand)
         suckOuts: [],
+        // coolers (both players had strong hands at showdown)
+        coolers: [],
       };
     }
     return players[name];
@@ -89,6 +92,7 @@ export function analyseLog(rows, viewerName = null) {
   function commitHand(hand) {
     if (!hand || !hand.id) return;
     handCount++;
+    handActionLogs[hand.number] = hand.actionLog.slice();
 
     const dealtNames = Object.keys(hand.players);
     const potSize = hand.winners.reduce((s, w) => s + w.amount, 0);
@@ -176,7 +180,6 @@ export function analyseLog(rows, viewerName = null) {
             num: hand.number,
             board: hand.board.slice(),
             potSize,
-            actionLog: hand.actionLog.slice(),
           };
 
           // Record on the loser as a bad beat
@@ -191,6 +194,7 @@ export function analyseLog(rows, viewerName = null) {
           });
 
           // Record on the winner as a suck-out
+          const winnerWonAmount = hand.winners.find(w => w.name === winnerName)?.amount ?? potSize;
           getPlayer(winnerName).suckOuts.push({
             ...entry,
             c1: wc[0], c2: wc[1],
@@ -200,7 +204,32 @@ export function analyseLog(rows, viewerName = null) {
             oppC1: lc[0], oppC2: lc[1],
             oppHandName: loserEval.name,
             oppHandRank: loserEval.rank, // severity = what we beat
+            wonAmount: winnerWonAmount,
           });
+
+          // Record cooler when both players had strong hands
+          // (loser Two Pair+ already guaranteed, winner needs Trips+)
+          if (winnerEval.rank >= 3) {
+            const coolerBase = { num: hand.number, board: hand.board.slice(), potSize };
+            getPlayer(loserName).coolers.push({
+              ...coolerBase,
+              c1: lc[0], c2: lc[1],
+              myHandName: loserEval.name, myHandRank: loserEval.rank,
+              oppName: winnerName,
+              oppC1: wc[0], oppC2: wc[1],
+              oppHandName: winnerEval.name, oppHandRank: winnerEval.rank,
+              won: false,
+            });
+            getPlayer(winnerName).coolers.push({
+              ...coolerBase,
+              c1: wc[0], c2: wc[1],
+              myHandName: winnerEval.name, myHandRank: winnerEval.rank,
+              oppName: loserName,
+              oppC1: lc[0], oppC2: lc[1],
+              oppHandName: loserEval.name, oppHandRank: loserEval.rank,
+              won: true,
+            });
+          }
         }
       }
     }
@@ -222,6 +251,7 @@ export function analyseLog(rows, viewerName = null) {
       const wonAmount = won ? (hand.winners.find(w => w.name === name)?.amount ?? null) : null;
       const isBadBeat = p.badBeats.some(bb => bb.num === hand.number);
       const isSuckOut = p.suckOuts.some(so => so.num === hand.number);
+      const isCooler = p.coolers.some(c => c.num === hand.number);
 
       const opponents = Object.entries(hand.shownCards)
         .filter(([n]) => n !== name)
@@ -255,12 +285,12 @@ export function analyseLog(rows, viewerName = null) {
         opponents,
         isBadBeat,
         isSuckOut,
+        isCooler,
         myHandName,
         winnerHandName,
         dealer: hand.dealer,
         sb: hand.sb,
         bb: hand.bb,
-        actionLog: hand.actionLog,
       });
     }
   }
@@ -501,5 +531,5 @@ export function analyseLog(rows, viewerName = null) {
     p.tightness = Math.max(0, Math.min(100, Math.round(100 - p.vpip)));
   }
 
-  return { players, handCount };
+  return { players, handCount, handActionLogs };
 }

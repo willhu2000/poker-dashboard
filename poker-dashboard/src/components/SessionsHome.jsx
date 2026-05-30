@@ -1,11 +1,66 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useMemo } from 'react';
 import { hasOutdatedSessions, clearAllSessions } from '../sessions.js';
+import { resolveAlias } from '../playerConfig.js';
+import PlayerManagement from './PlayerManagement.jsx';
 
 function fmt(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error }) {
+function SummaryCard({ icon, label, value, sub, color }) {
+  return (
+    <div className="summary-card">
+      <div className="summary-icon">{icon}</div>
+      <div className="summary-label">{label}</div>
+      <div className="summary-value" style={{ color }}>{value}</div>
+      {sub && <div className="summary-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function computeSummary(sessions, config) {
+  let totalHands = 0;
+  let viewerNet = 0;
+  let biggestPotWon = null;
+  let worstBadBeat = null;
+  let hasViewer = false;
+  const viewer = config?.viewer;
+
+  for (const s of sessions) {
+    totalHands += s.handCount;
+    if (!viewer) continue;
+
+    // Find the viewer's data in this session — their raw name might differ
+    for (const rawName of s.playerNames) {
+      const canonical = resolveAlias(rawName, config);
+      if (canonical !== viewer) continue;
+
+      const vp = s.stats?.players?.[rawName];
+      if (!vp) continue;
+      hasViewer = true;
+      viewerNet += vp.netChips ?? 0;
+
+      for (const h of (vp.handsHistory || [])) {
+        if (h.won && h.potSize > 0) {
+          if (!biggestPotWon || h.potSize > biggestPotWon.amount) {
+            biggestPotWon = { amount: h.potSize, sessionName: s.fileName };
+          }
+        }
+      }
+
+      for (const bb of (vp.badBeats || [])) {
+        if (!worstBadBeat || bb.myHandRank > worstBadBeat.rank ||
+            (bb.myHandRank === worstBadBeat.rank && bb.potSize > worstBadBeat.potSize)) {
+          worstBadBeat = { rank: bb.myHandRank, handName: bb.myHandName, potSize: bb.potSize, sessionName: s.fileName };
+        }
+      }
+    }
+  }
+
+  return { totalHands, viewerNet, hasViewer, biggestPotWon, worstBadBeat };
+}
+
+export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange }) {
   const inputRef = useRef(null);
   const draggingRef = useRef(false);
 
@@ -24,6 +79,11 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
   const onDragLeave = useCallback((e) => { e.currentTarget.classList.remove('over'); }, []);
 
   const hasSessions = sessions.length > 0;
+
+  const summary = useMemo(
+    () => hasSessions ? computeSummary(sessions, playerConfig) : null,
+    [sessions, playerConfig, hasSessions]
+  );
 
   if (!hasSessions) {
     return (
@@ -105,6 +165,46 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
             </button>
           </div>
         )}
+
+        {/* ── Summary Cards ──────────────────────────────────────────────── */}
+        {summary && (
+          <div className="summary-grid">
+            <SummaryCard icon="🃏" label="Total Hands" value={summary.totalHands.toLocaleString()} />
+            {summary.hasViewer ? (
+              <>
+                <SummaryCard
+                  icon="💰"
+                  label="Your Net Chips"
+                  value={`${summary.viewerNet >= 0 ? '+' : ''}${summary.viewerNet.toLocaleString()}`}
+                  color={summary.viewerNet >= 0 ? 'var(--win)' : 'var(--lose)'}
+                />
+                <SummaryCard
+                  icon="🏆"
+                  label="Biggest Pot Won"
+                  value={summary.biggestPotWon ? summary.biggestPotWon.amount.toLocaleString() : '—'}
+                  sub={summary.biggestPotWon?.sessionName}
+                />
+                <SummaryCard
+                  icon="💔"
+                  label="Worst Bad Beat"
+                  value={summary.worstBadBeat ? summary.worstBadBeat.handName : '—'}
+                  sub={summary.worstBadBeat ? `Pot: ${summary.worstBadBeat.potSize.toLocaleString()}` : null}
+                />
+              </>
+            ) : (
+              <div className="summary-prompt" style={{ gridColumn: 'span 3' }}>
+                Select your player in Player Management below to see personalized stats.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Player Management ───────────────────────────────────────────── */}
+        <PlayerManagement
+          sessions={sessions}
+          config={playerConfig}
+          onConfigChange={onPlayerConfigChange}
+        />
 
         <div
           className="drop-area drop-area-compact"

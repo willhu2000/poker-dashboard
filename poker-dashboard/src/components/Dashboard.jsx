@@ -239,7 +239,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
         ))}
       </div>
 
-      {selected && <PlayerDetail player={selected} isMerged={isMerged} isViewer={viewerNames.includes(selected.name)} />}
+      {selected && <PlayerDetail player={selected} isMerged={isMerged} isViewer={viewerNames.includes(selected.name)} handActionLogs={data.handActionLogs || {}} />}
 
       <hr className="divider" />
 

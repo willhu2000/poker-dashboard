@@ -1,3 +1,5 @@
+import { resolveAlias } from './playerConfig.js';
+
 const KEY = 'poker-sessions';
 
 // Bump when the shape of the saved `stats` payload changes in a way that affects
@@ -55,7 +57,7 @@ export function deleteSession(id) {
   localStorage.setItem(KEY, JSON.stringify(updated));
 }
 
-export function mergeSessions(sessions) {
+export function mergeSessions(sessions, playerConfig = null) {
   if (!sessions.length) return null;
   if (sessions.length === 1) {
     const session = sessions[0];
@@ -74,18 +76,35 @@ export function mergeSessions(sessions) {
         so.sessionId = session.id;
         so.sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
       });
+      (player.coolers || []).forEach(c => {
+        c.sessionId = session.id;
+        c.sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
+      });
     }
+    // Build session-prefixed action log map so PlayerDetail can look up by {sessionId}_{num}
+    const handActionLogs = {};
+    for (const [num, log] of Object.entries(stats.handActionLogs || {})) {
+      handActionLogs[`${session.id}_${num}`] = log;
+    }
+    stats.handActionLogs = handActionLogs;
     return stats;
   }
 
   const players = {};
   let handCount = 0;
+  const handActionLogs = {};
 
   for (const session of sessions) {
+    // Collect this session's action logs under session-prefixed keys to avoid
+    // hand-number collisions between sessions (each session restarts from #1).
+    for (const [num, log] of Object.entries(session.stats.handActionLogs || {})) {
+      handActionLogs[`${session.id}_${num}`] = log;
+    }
     const sessionDate = session.gameDate || session.uploadedAt?.split('T')[0];
     const sessionId = session.id;
     handCount += session.handCount;
-    for (const [name, sp] of Object.entries(session.stats.players)) {
+    for (const [rawName, sp] of Object.entries(session.stats.players)) {
+      const name = resolveAlias(rawName, playerConfig);
       if (!players[name]) {
         players[name] = {
           name,
@@ -100,6 +119,7 @@ export function mergeSessions(sessions) {
           handsHistory: [],
           badBeats: [],
           suckOuts: [],
+          coolers: [],
         };
       }
       const p = players[name];
@@ -125,9 +145,11 @@ export function mergeSessions(sessions) {
       const taggedHistory = (sp.handsHistory || []).map(h => ({ ...h, sessionId, sessionDate }));
       const taggedBadBeats = (sp.badBeats || []).map(bb => ({ ...bb, sessionId, sessionDate }));
       const taggedSuckOuts = (sp.suckOuts || []).map(so => ({ ...so, sessionId, sessionDate }));
+      const taggedCoolers = (sp.coolers || []).map(c => ({ ...c, sessionId, sessionDate }));
       p.handsHistory  = p.handsHistory.concat(taggedHistory);
       p.badBeats      = p.badBeats.concat(taggedBadBeats);
       p.suckOuts      = p.suckOuts.concat(taggedSuckOuts);
+      p.coolers       = p.coolers.concat(taggedCoolers);
       for (const [cat, cnt] of Object.entries(sp.handCategories || {})) {
         p.handCategories[cat] = (p.handCategories[cat] || 0) + cnt;
       }
@@ -135,6 +157,12 @@ export function mergeSessions(sessions) {
         p.streetActions[s] += sp.streetActions?.[s] || 0;
       }
     }
+  }
+
+  // Remove hidden players
+  const hiddenSet = new Set(playerConfig?.hidden || []);
+  for (const name of Object.keys(players)) {
+    if (hiddenSet.has(name)) delete players[name];
   }
 
   for (const p of Object.values(players)) {
@@ -153,5 +181,5 @@ export function mergeSessions(sessions) {
     p.tightness = Math.max(0, Math.min(100, Math.round(100 - p.vpip)));
   }
 
-  return { players, handCount };
+  return { players, handCount, handActionLogs };
 }

@@ -3,6 +3,7 @@ import './index.css';
 import { parseLog, extractGameDate, extractPlayerNames, formatSessionName, hashContent } from './parser.js';
 import { analyseLog } from './stats.js';
 import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate } from './sessions.js';
+import { loadPlayerConfig, savePlayerConfig, resolveAlias } from './playerConfig.js';
 import Dashboard from './components/Dashboard.jsx';
 import SessionsHome from './components/SessionsHome.jsx';
 import TrendsView from './components/TrendsView.jsx';
@@ -16,7 +17,19 @@ const AUTO_LOAD_LOGS = ['/log1.csv', '/log2.csv'];
 // hole cards we see on every dealt hand. We persist the pick on each session,
 // but older saves don't have it; fall back to the legacy "will*" heuristic so
 // the coaching report still surfaces for the bundled samples / pre-v3 saves.
-function resolveViewerNames(sessions, stats) {
+// When a global viewer is set in playerConfig, prefer that (resolving aliases).
+function resolveViewerNames(sessions, stats, playerConfig = null) {
+  // Global viewer from player management takes priority
+  if (playerConfig?.viewer) {
+    // The viewer canonical name may exist in merged stats as-is, or via aliases
+    const canonical = playerConfig.viewer;
+    if (stats.players[canonical]) return [canonical];
+    // Check if any player in stats is an alias of the viewer
+    const match = Object.keys(stats.players).find(n => resolveAlias(n, playerConfig) === canonical);
+    if (match) return [match];
+  }
+
+  // Fall back to per-session viewerName
   const names = new Set();
   for (const s of sessions) {
     if (s.viewerName) names.add(s.viewerName);
@@ -30,10 +43,16 @@ export default function App() {
   const [sessions, setSessions] = useState(() => loadSessions());
   const [view, setView] = useState(null); // null | { type:'single', id } | { type:'merged', selectedIds:[] }
   const [error, setError] = useState(null);
+  const [playerConfig, setPlayerConfig] = useState(() => loadPlayerConfig());
   // Pending upload waiting for viewer-name selection. Set after a CSV is read
   // and parsed; cleared after the user picks a player (or cancels).
   // Shape: { fileName, rows, gameDate, hash, playerNames, openOnSave: bool }
   const [pendingUpload, setPendingUpload] = useState(null);
+
+  function handlePlayerConfigChange(newConfig) {
+    savePlayerConfig(newConfig);
+    setPlayerConfig(newConfig);
+  }
 
   // On first launch (no saved sessions), auto-ingest the bundled CSVs.
   useEffect(() => {
@@ -155,13 +174,13 @@ export default function App() {
       data = session.stats;
       label = session.fileName;
       selectedIds = [view.id];
-      viewerNames = resolveViewerNames([session], data);
+      viewerNames = resolveViewerNames([session], data, playerConfig);
     } else {
       selectedIds = view.selectedIds && view.selectedIds.length > 0 ? view.selectedIds : currentSessions.map(s => s.id);
       const sessionsToMerge = currentSessions.filter(s => selectedIds.includes(s.id));
-      data = mergeSessions(sessionsToMerge);
+      data = mergeSessions(sessionsToMerge, playerConfig);
       label = `${selectedIds.length} of ${currentSessions.length} sessions merged`;
-      viewerNames = resolveViewerNames(sessionsToMerge, data);
+      viewerNames = resolveViewerNames(sessionsToMerge, data, playerConfig);
     }
     if (!data) { setView(null); return null; }
 
@@ -197,6 +216,8 @@ export default function App() {
         onDelete={handleDelete}
         onNewFile={handleNewFile}
         error={error}
+        playerConfig={playerConfig}
+        onPlayerConfigChange={handlePlayerConfigChange}
       />
       {modal}
     </div>
