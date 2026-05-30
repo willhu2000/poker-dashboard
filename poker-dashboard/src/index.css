@@ -967,6 +967,48 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
 .detail-toggle-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(108,99,255,0.1); }
 .detail-toggle-btn:hover { border-color:var(--accent); color:var(--text); }
 
+/* ── Simple View fun stats ── */
+.simple-fun-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.fun-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.fun-icon { font-size: 1.1rem; flex-shrink: 0; }
+.fun-label { font-size: 0.78rem; color: var(--muted); flex: 1; }
+.fun-value { font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
+
+/* ── Simple mode prompt ── */
+.simple-mode-prompt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 14px 20px;
+  margin-top: 16px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.simple-mode-prompt:hover {
+  border-color: var(--accent);
+  background: rgba(108, 99, 255, 0.05);
+}
+.smp-icon { font-size: 1.2rem; }
+.smp-text { flex: 1; font-size: 0.82rem; color: var(--muted); }
+.smp-text strong { color: var(--text); }
+.smp-arrow { font-size: 1.1rem; color: var(--accent); font-weight: 700; }
+
 /* ── Action log ── */
 .action-log { display:flex; flex-direction:column; gap:6px; font-size:0.78rem; }
 .al-group { }

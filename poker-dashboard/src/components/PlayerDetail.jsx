@@ -384,6 +384,83 @@ const SUCKOUT_NONE = [
   'A clean conscience — you haven\'t stolen any pots from someone who deserved them.',
 ];
 
+// ── Simple View stats ─────────────────────────────────────────────────────────
+function SimpleStats({ player: p, biggestWins, biggestLosses, badBeats, suckOuts, coolers }) {
+  const chipsPerHand = p.handsDealt > 0 ? (p.netChips / p.handsDealt).toFixed(1) : 0;
+  const showdownWins = (p.handsHistory || []).filter(h => h.wasShown && h.won).length;
+  const showdownTotal = (p.handsHistory || []).filter(h => h.wasShown).length;
+  const showdownPct = showdownTotal > 0 ? Math.round(showdownWins / showdownTotal * 100) : 0;
+  const topWin = biggestWins[0];
+  const topLoss = biggestLosses[0];
+  const foldPct = p.preflopFoldPct;
+
+  return (
+    <div className="simple-stats">
+      <div className="detail-grid">
+        <div className="detail-stat"><div className="ds-label">Hands Dealt</div><div className="ds-value">{p.handsDealt}</div></div>
+        <div className="detail-stat"><div className="ds-label">Net Chips</div>
+          <div className="ds-value" style={{ color: p.netChips >= 0 ? 'var(--win)' : 'var(--lose)' }}>
+            {p.netChips >= 0 ? '+' : ''}{p.netChips}
+          </div>
+        </div>
+        <div className="detail-stat"><div className="ds-label">Win Rate</div><div className="ds-value">{p.winRate}%</div></div>
+        <div className="detail-stat"><div className="ds-label">VPIP</div><div className="ds-value">{p.vpip}%</div></div>
+      </div>
+
+      <div className="simple-fun-stats">
+        <div className="fun-stat">
+          <span className="fun-icon">📊</span>
+          <span className="fun-label">Chips per Hand</span>
+          <span className="fun-value" style={{ color: chipsPerHand >= 0 ? 'var(--win)' : 'var(--lose)' }}>
+            {chipsPerHand >= 0 ? '+' : ''}{chipsPerHand}
+          </span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">🎯</span>
+          <span className="fun-label">Showdown Win Rate</span>
+          <span className="fun-value">{showdownPct}% <span style={{ color: 'var(--muted)', fontSize: '0.72rem' }}>({showdownWins}/{showdownTotal})</span></span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">🏆</span>
+          <span className="fun-label">Biggest Pot Won</span>
+          <span className="fun-value" style={{ color: 'var(--win)' }}>
+            {topWin ? topWin.potSize.toLocaleString() : '—'}
+            {topWin?.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>({topWin.myHandName})</span>}
+          </span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">💸</span>
+          <span className="fun-label">Biggest Pot Lost</span>
+          <span className="fun-value" style={{ color: 'var(--lose)' }}>
+            {topLoss ? topLoss.potSize.toLocaleString() : '—'}
+            {topLoss?.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>({topLoss.myHandName})</span>}
+          </span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">🃏</span>
+          <span className="fun-label">Fold Preflop</span>
+          <span className="fun-value">{foldPct}%</span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">💔</span>
+          <span className="fun-label">Bad Beats</span>
+          <span className="fun-value">{badBeats.length}</span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">🎲</span>
+          <span className="fun-label">Suck-Outs</span>
+          <span className="fun-value">{suckOuts.length}</span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">⚔️</span>
+          <span className="fun-label">Coolers</span>
+          <span className="fun-value">{coolers.length}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PlayerDetail({ player: p, isMerged = false, isViewer = false, handActionLogs = {} }) {
   const [showRadarInfo, setShowRadarInfo] = useState(false);
@@ -547,24 +624,28 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
       </div>
 
       {/* Stat grid */}
-      <div className="detail-grid">
-        <div className="detail-stat"><div className="ds-label">Hands Dealt</div><div className="ds-value">{p.handsDealt}</div></div>
-        <div className="detail-stat"><div className="ds-label">Net Chips</div>
-          <div className="ds-value" style={{ color: p.netChips >= 0 ? 'var(--win)' : 'var(--lose)' }}>
-            {p.netChips >= 0 ? '+' : ''}{p.netChips}
+      {detailMode ? (
+        <div className="detail-grid">
+          <div className="detail-stat"><div className="ds-label">Hands Dealt</div><div className="ds-value">{p.handsDealt}</div></div>
+          <div className="detail-stat"><div className="ds-label">Net Chips</div>
+            <div className="ds-value" style={{ color: p.netChips >= 0 ? 'var(--win)' : 'var(--lose)' }}>
+              {p.netChips >= 0 ? '+' : ''}{p.netChips}
+            </div>
           </div>
+          <div className="detail-stat"><div className="ds-label">VPIP</div><div className="ds-value">{p.vpip}%</div></div>
+          <div className="detail-stat"><div className="ds-label">PFR</div><div className="ds-value">{p.pfr}%</div></div>
+          <div className="detail-stat"><div className="ds-label">Preflop Fold</div><div className="ds-value">{p.preflopFoldPct}%</div></div>
+          <div className="detail-stat"><div className="ds-label">Agg Factor</div><div className="ds-value">{p.af === 99 ? '∞' : p.af}</div></div>
+          <div className="detail-stat"><div className="ds-label">Win Rate</div><div className="ds-value">{p.winRate}%</div></div>
+          <div className="detail-stat"><div className="ds-label">Hands Won</div><div className="ds-value">{p.handsWon}</div></div>
+          <div className="detail-stat"><div className="ds-label">Luckiness†</div><div className="ds-value">{p.luckiness}%</div></div>
+          <div className="detail-stat"><div className="ds-label">Buy-ins</div><div className="ds-value">{p.buyIns}</div></div>
+          <div className="detail-stat"><div className="ds-label">Cash Out</div><div className="ds-value">{p.cashOut}</div></div>
+          <div className="detail-stat"><div className="ds-label">Showdowns</div><div className="ds-value">{p.shownHands.length}</div></div>
         </div>
-        <div className="detail-stat"><div className="ds-label">VPIP</div><div className="ds-value">{p.vpip}%</div></div>
-        <div className="detail-stat"><div className="ds-label">PFR</div><div className="ds-value">{p.pfr}%</div></div>
-        <div className="detail-stat"><div className="ds-label">Preflop Fold</div><div className="ds-value">{p.preflopFoldPct}%</div></div>
-        <div className="detail-stat"><div className="ds-label">Agg Factor</div><div className="ds-value">{p.af === 99 ? '∞' : p.af}</div></div>
-        <div className="detail-stat"><div className="ds-label">Win Rate</div><div className="ds-value">{p.winRate}%</div></div>
-        <div className="detail-stat"><div className="ds-label">Hands Won</div><div className="ds-value">{p.handsWon}</div></div>
-        <div className="detail-stat"><div className="ds-label">Luckiness†</div><div className="ds-value">{p.luckiness}%</div></div>
-        <div className="detail-stat"><div className="ds-label">Buy-ins</div><div className="ds-value">{p.buyIns}</div></div>
-        <div className="detail-stat"><div className="ds-label">Cash Out</div><div className="ds-value">{p.cashOut}</div></div>
-        <div className="detail-stat"><div className="ds-label">Showdowns</div><div className="ds-value">{p.shownHands.length}</div></div>
-      </div>
+      ) : (
+        <SimpleStats player={p} biggestWins={biggestWins} biggestLosses={biggestLosses} badBeats={badBeats} suckOuts={suckOuts} coolers={coolers} />
+      )}
 
       {/* Charts */}
       <div className="charts-grid" style={{ marginBottom: 0 }}>
@@ -652,9 +733,21 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
         )}
       </div>
 
+      {/* In simple mode, show a prompt to switch to detailed mode */}
+      {!detailMode && (
+        <div className="simple-mode-prompt" onClick={() => setDetailMode(true)}>
+          <span className="smp-icon">🔍</span>
+          <span className="smp-text">Open <strong>Detailed Mode</strong> for full hand history, key hands, coaching report, and more</span>
+          <span className="smp-arrow">→</span>
+        </div>
+      )}
+
       {/* ── Coaching report (shown for every player; depth scales with how many
            hole cards we know — full for the viewer, showdowns-only for others) ── */}
-      <CoachingReport player={p} isMerged={isMerged} isViewer={isViewer} />
+      {detailMode && <CoachingReport player={p} isMerged={isMerged} isViewer={isViewer} />}
+
+      {/* ── Everything below is detailed mode only ─────────────────────────── */}
+      {detailMode && <>
 
       {/* ── Category drill-down ───────────────────────────────────────────────── */}
       {selectedCategory && (
@@ -1125,6 +1218,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
         VPIP/PFR/Fold% from preflop actions. AF = (Bets+Raises)/Calls post-flop.
         Bad beats = showdown losses with Two Pair or better. Suck-outs = the inverse.
       </p>
+
+      </>}
     </div>
   );
 }
