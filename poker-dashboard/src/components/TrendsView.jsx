@@ -3,8 +3,14 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   ReferenceLine, CartesianGrid,
 } from 'recharts';
+import { resolveAlias, resolveDisplayName } from '../playerConfig.js';
 
-const COLORS = ['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a29bfe','#55efc4','#fdcb6e','#e17055','#74b9ff'];
+const COLORS = [
+  '#6c63ff','#00d4aa','#ffd166','#ff6b6b','#e91e8c',
+  '#74b9ff','#55efc4','#fdcb6e','#e17055','#a29bfe',
+  '#00cec9','#f78fb3','#7bed9f','#cf6a87','#3dc1d3',
+  '#f19066','#c44569','#546de5','#e15f41','#778beb',
+];
 
 const SMALL_SAMPLE_THRESHOLD = 20; // hands dealt per session below which a marker is "noisy"
 
@@ -49,7 +55,13 @@ const Tip = ({ active, payload, label }) => {
   );
 };
 
-export default function TrendsView({ sessions, onBack }) {
+export default function TrendsView({ sessions, onBack, playerConfig }) {
+  // Resolve a raw CSV name → display name (alias then rename)
+  const displayName = (raw) => {
+    const canonical = resolveAlias(raw, playerConfig);
+    return resolveDisplayName(canonical, playerConfig);
+  };
+
   // Sessions come newest-first from loadSessions(); sort ascending by gameDate.
   const orderedSessions = useMemo(() => {
     return [...sessions].sort((a, b) => {
@@ -59,34 +71,46 @@ export default function TrendsView({ sessions, onBack }) {
     });
   }, [sessions]);
 
-  // Aggregate hands-played per player across all sessions (for default selection).
+  // Aggregate hands-played per player across all sessions (using display names).
   const allPlayers = useMemo(() => {
     const totals = {};
     for (const s of orderedSessions) {
-      for (const [name, sp] of Object.entries(s.stats?.players || {})) {
+      for (const [rawName, sp] of Object.entries(s.stats?.players || {})) {
+        const name = displayName(rawName);
         totals[name] = (totals[name] || 0) + (sp.handsDealt || 0);
       }
     }
     return Object.entries(totals)
       .map(([name, hands]) => ({ name, hands }))
       .sort((a, b) => b.hands - a.hands);
-  }, [orderedSessions]);
+  }, [orderedSessions, playerConfig]);
 
-  const [selected, setSelected] = useState(() => allPlayers.slice(0, 3).map(p => p.name));
+  const [selected, setSelected] = useState(() => allPlayers.map(p => p.name));
 
   const togglePlayer = (name) => {
     setSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   };
 
   // Build the per-session × per-metric series.
-  // Result: rows[i] = { date, [playerName]: number, [`${name}__small`]: bool }
+  // Result: rows[i] = { date, [displayName]: number, [`${name}__small`]: bool }
   const seriesByMetric = useMemo(() => {
     const out = {};
     for (const m of METRICS) {
       out[m.key] = orderedSessions.map(s => {
         const row = { date: fmtDate(s.gameDate), _date: s.gameDate };
+        // Build a display-name → stats lookup for this session
+        const byDisplay = {};
+        for (const [rawName, sp] of Object.entries(s.stats?.players || {})) {
+          const dn = displayName(rawName);
+          // If multiple raw names map to the same display name, merge accumulators
+          if (!byDisplay[dn]) byDisplay[dn] = { ...sp };
+          else {
+            byDisplay[dn].handsDealt = (byDisplay[dn].handsDealt || 0) + (sp.handsDealt || 0);
+            byDisplay[dn][m.key] = sp[m.key] ?? byDisplay[dn][m.key];
+          }
+        }
         for (const name of selected) {
-          const sp = s.stats?.players?.[name];
+          const sp = byDisplay[name];
           if (!sp || (sp.handsDealt || 0) === 0) {
             row[name] = null;
           } else {
@@ -98,7 +122,7 @@ export default function TrendsView({ sessions, onBack }) {
       });
     }
     return out;
-  }, [orderedSessions, selected]);
+  }, [orderedSessions, selected, playerConfig]);
 
   // First→last delta per (player, metric), skipping sessions where the player wasn't dealt in.
   const movement = useMemo(() => {
@@ -107,7 +131,8 @@ export default function TrendsView({ sessions, onBack }) {
       const valuesByMetric = {};
       for (const m of METRICS) valuesByMetric[m.key] = [];
       for (const s of orderedSessions) {
-        const sp = s.stats?.players?.[name];
+        // Find this display-named player in the session's raw data
+        const sp = Object.entries(s.stats?.players || {}).find(([raw]) => displayName(raw) === name)?.[1];
         if (!sp || (sp.handsDealt || 0) === 0) continue;
         for (const m of METRICS) {
           const v = sp[m.key];
@@ -124,7 +149,7 @@ export default function TrendsView({ sessions, onBack }) {
       rows.push({ name, sessionsPlayed, deltas });
     }
     return rows;
-  }, [orderedSessions, selected]);
+  }, [orderedSessions, selected, playerConfig]);
 
   if (orderedSessions.length < 2) {
     return (

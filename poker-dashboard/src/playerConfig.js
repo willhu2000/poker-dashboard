@@ -8,6 +8,9 @@ const KEY = 'poker-player-config';
  *     "William": "Will",
  *     "Will H": "Will"
  *   },
+ *   renames: {                // canonical name → custom display name
+ *     "Will": "William the Great"
+ *   },
  *   hidden: ["Bot"]           // canonical names to exclude from views
  * }
  */
@@ -24,10 +27,16 @@ export function savePlayerConfig(config) {
   localStorage.setItem(KEY, JSON.stringify(config));
 }
 
-/** Resolve a raw CSV name to its canonical display name. */
+/** Resolve a raw CSV name to its canonical name (alias resolution only). */
 export function resolveAlias(rawName, config) {
   if (!config?.aliases) return rawName;
   return config.aliases[rawName] || rawName;
+}
+
+/** Resolve a canonical name to its display name (applies renames). */
+export function resolveDisplayName(canonicalName, config) {
+  if (!config?.renames) return canonicalName;
+  return config.renames[canonicalName] || canonicalName;
 }
 
 /** Get all unique canonical player names across all sessions. */

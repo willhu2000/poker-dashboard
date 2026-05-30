@@ -3,7 +3,7 @@ import './index.css';
 import { parseLog, extractGameDate, extractPlayerNames, formatSessionName, hashContent } from './parser.js';
 import { analyseLog } from './stats.js';
 import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate } from './sessions.js';
-import { loadPlayerConfig, savePlayerConfig, resolveAlias } from './playerConfig.js';
+import { loadPlayerConfig, savePlayerConfig, resolveAlias, resolveDisplayName } from './playerConfig.js';
 import Dashboard from './components/Dashboard.jsx';
 import SessionsHome from './components/SessionsHome.jsx';
 import TrendsView from './components/TrendsView.jsx';
@@ -21,9 +21,12 @@ const AUTO_LOAD_LOGS = ['/log1.csv', '/log2.csv'];
 function resolveViewerNames(sessions, stats, playerConfig = null) {
   // Global viewer from player management takes priority
   if (playerConfig?.viewer) {
-    // The viewer canonical name may exist in merged stats as-is, or via aliases
     const canonical = playerConfig.viewer;
+    // Check canonical name directly
     if (stats.players[canonical]) return [canonical];
+    // Check renamed display name
+    const display = resolveDisplayName(canonical, playerConfig);
+    if (display !== canonical && stats.players[display]) return [display];
     // Check if any player in stats is an alias of the viewer
     const match = Object.keys(stats.players).find(n => resolveAlias(n, playerConfig) === canonical);
     if (match) return [match];
@@ -159,7 +162,7 @@ export default function App() {
     const currentSessions = loadSessions();
     return (
       <div className="app">
-        <TrendsView sessions={currentSessions} onBack={() => setView(null)} />
+        <TrendsView sessions={currentSessions} onBack={() => setView(null)} playerConfig={playerConfig} />
         {modal}
       </div>
     );
@@ -171,7 +174,7 @@ export default function App() {
     if (view.type === 'single') {
       const session = currentSessions.find(s => s.id === view.id);
       if (!session) { setView(null); return null; }
-      data = session.stats;
+      data = mergeSessions([session], playerConfig);
       label = session.fileName;
       selectedIds = [view.id];
       viewerNames = resolveViewerNames([session], data, playerConfig);
@@ -218,6 +221,7 @@ export default function App() {
         error={error}
         playerConfig={playerConfig}
         onPlayerConfigChange={handlePlayerConfigChange}
+        viewerName={playerConfig?.viewer ? resolveDisplayName(playerConfig.viewer, playerConfig) : null}
       />
       {modal}
     </div>

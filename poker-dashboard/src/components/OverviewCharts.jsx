@@ -2,7 +2,12 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 
-const COLORS = ['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a29bfe','#55efc4','#fdcb6e','#e17055','#74b9ff'];
+const COLORS = [
+  '#6c63ff','#00d4aa','#ffd166','#ff6b6b','#e91e8c',
+  '#74b9ff','#55efc4','#fdcb6e','#e17055','#a29bfe',
+  '#00cec9','#f78fb3','#7bed9f','#cf6a87','#3dc1d3',
+  '#f19066','#c44569','#546de5','#e15f41','#778beb',
+];
 
 // Deterministic per-player swatch (same scheme as Dashboard hero avatars).
 function colorFor(name) {
@@ -19,15 +24,20 @@ function initialsOf(name) {
 // Custom CSS quadrant chart (replaces Recharts ScatterChart, which crashes under
 // React 19 + Recharts 3 because Scatter passes a string to a path's `style` prop).
 function StyleQuadrants({ players }) {
-  // Map VPIP (0-100) → x %, AF (0-10 capped) → inverted y % so high AF is at top.
-  // Use logical axis margins so dots near 0 / 100 stay inside the bounds.
-  const VPIP_MAX = 100, AF_MAX = 10;
+  // Zoom the axes to the range where home-game players actually cluster.
+  // VPIP: 0–100, AF: 0–5 (capped). The lower AF cap gives more vertical
+  // room in the passive region where casual players tend to sit.
+  const VPIP_MAX = 100, AF_MAX = 5;
+  // Crosshairs: VPIP=30 (more realistic for home games) and AF=1.5
+  const VPIP_LINE = 30, AF_LINE = 1.5;
   const dots = players.map(p => {
     const af = Math.min(p.af, AF_MAX);
     const x = (p.vpip / VPIP_MAX) * 100;
     const y = 100 - (af / AF_MAX) * 100;
     return { ...p, x, y, color: colorFor(p.name) };
   });
+  const vLinePct = (VPIP_LINE / VPIP_MAX) * 100;
+  const hLinePct = 100 - (AF_LINE / AF_MAX) * 100;
   return (
     <div className="quadrant-wrap">
       <div className="quadrant-chart">
@@ -36,9 +46,20 @@ function StyleQuadrants({ players }) {
         <div className="quad-label tr">Loose-Aggressive (LAG)</div>
         <div className="quad-label bl">Tight-Passive (Rock)</div>
         <div className="quad-label br">Loose-Passive (Calling Station)</div>
-        {/* Crosshair lines at VPIP=25 and AF=2 */}
-        <div className="quad-line v" style={{ left: '25%' }} />
-        <div className="quad-line h" style={{ top: `${100 - (2 / AF_MAX) * 100}%` }} />
+        {/* Crosshair lines */}
+        <div className="quad-line v" style={{ left: `${vLinePct}%` }} />
+        <div className="quad-line h" style={{ top: `${hLinePct}%` }} />
+        {/* Axis tick marks */}
+        <div className="quad-tick-row">
+          {[0, 25, 50, 75, 100].map(v => (
+            <span key={v} className="quad-tick" style={{ left: `${v}%` }}>{v}</span>
+          ))}
+        </div>
+        <div className="quad-tick-col">
+          {[0, 1, 2, 3, 4, 5].map(v => (
+            <span key={v} className="quad-tick" style={{ top: `${100 - (v / AF_MAX) * 100}%` }}>{v}</span>
+          ))}
+        </div>
         {/* Dots */}
         {dots.map(d => (
           <div

@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { getAllCanonicalPlayers, getAliasesFor, isViewer, isHidden } from '../playerConfig.js';
+import { getAllCanonicalPlayers, getAliasesFor, isViewer, isHidden, resolveDisplayName } from '../playerConfig.js';
 
 export default function PlayerManagement({ sessions, config, onConfigChange }) {
   const [open, setOpen] = useState(false);
   const [mergeSelection, setMergeSelection] = useState(new Set());
   const [merging, setMerging] = useState(false);
   const [mergeName, setMergeName] = useState('');
+  const [renamingPlayer, setRenamingPlayer] = useState(null); // canonical name being renamed
+  const [renameValue, setRenameValue] = useState('');
 
   const allPlayers = getAllCanonicalPlayers(sessions, config);
   const visiblePlayers = allPlayers.filter(n => !isHidden(n, config));
@@ -102,6 +104,34 @@ export default function PlayerManagement({ sessions, config, onConfigChange }) {
     onConfigChange({ ...config, aliases });
   }
 
+  function startRename(canonicalName) {
+    setRenamingPlayer(canonicalName);
+    setRenameValue(resolveDisplayName(canonicalName, config));
+  }
+
+  function confirmRename() {
+    if (!renamingPlayer || !renameValue.trim()) return;
+    const renames = { ...(config?.renames || {}) };
+    const newName = renameValue.trim();
+    if (newName === renamingPlayer) {
+      // Revert to original — remove any rename
+      delete renames[renamingPlayer];
+    } else {
+      renames[renamingPlayer] = newName;
+    }
+    // If the renamed player was the viewer, update viewer to the new display name
+    let viewer = config?.viewer;
+    if (viewer === renamingPlayer) viewer = renamingPlayer; // viewer stays as canonical
+    onConfigChange({ ...config, renames, viewer });
+    setRenamingPlayer(null);
+    setRenameValue('');
+  }
+
+  function cancelRename() {
+    setRenamingPlayer(null);
+    setRenameValue('');
+  }
+
   if (!sessions.length) return null;
 
   return (
@@ -147,14 +177,33 @@ export default function PlayerManagement({ sessions, config, onConfigChange }) {
                   const aliases = getAliasesFor(name, config);
                   const stats = playerStats(name);
                   const selected = mergeSelection.has(name);
+                  const displayName = resolveDisplayName(name, config);
+                  const isRenamed = displayName !== name;
+                  const isRenaming = renamingPlayer === name;
 
                   return (
                     <div key={name} className={`player-chip${isMe ? ' viewer' : ''}${selected ? ' selected' : ''}`}>
                       <div className="pc-header">
-                        <span className="pc-name" title={name}>
-                          {isMe && <span className="pc-star">★ </span>}
-                          {name}
-                        </span>
+                        {isRenaming ? (
+                          <span className="pc-rename-wrap">
+                            <input
+                              className="pc-rename-input"
+                              type="text"
+                              value={renameValue}
+                              onChange={e => setRenameValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') cancelRename(); }}
+                              autoFocus
+                            />
+                            <button className="pc-btn active" onClick={confirmRename} title="Save">OK</button>
+                            <button className="pc-btn" onClick={cancelRename} title="Cancel">X</button>
+                          </span>
+                        ) : (
+                          <span className="pc-name" title={isRenamed ? `Original: ${name}` : name}>
+                            {isMe && <span className="pc-star">★ </span>}
+                            {displayName}
+                            {isRenamed && <span className="pc-renamed-badge">renamed</span>}
+                          </span>
+                        )}
                         <span className="pc-stats">{stats.sessionCount}s · {stats.handCount}h</span>
                       </div>
 
@@ -163,7 +212,7 @@ export default function PlayerManagement({ sessions, config, onConfigChange }) {
                           aka: {aliases.map((a, i) => (
                             <span key={a}>
                               {a}
-                              <button className="pc-unmerge" onClick={() => unmergeName(a)} title={`Unmerge ${a}`}>×</button>
+                              <button className="pc-unmerge" onClick={() => unmergeName(a)} title={`Unmerge ${a}`}>x</button>
                               {i < aliases.length - 1 ? ', ' : ''}
                             </span>
                           ))}
@@ -176,6 +225,7 @@ export default function PlayerManagement({ sessions, config, onConfigChange }) {
                             This is me
                           </button>
                         )}
+                        <button className="pc-btn" onClick={() => startRename(name)}>Rename</button>
                         <button className="pc-btn" onClick={() => toggleHidden(name)}>Hide</button>
                         <button
                           className={`pc-btn${selected ? ' active' : ''}`}

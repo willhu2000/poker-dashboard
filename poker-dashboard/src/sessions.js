@@ -1,4 +1,4 @@
-import { resolveAlias } from './playerConfig.js';
+import { resolveAlias, resolveDisplayName } from './playerConfig.js';
 
 const KEY = 'poker-sessions';
 
@@ -87,6 +87,17 @@ export function mergeSessions(sessions, playerConfig = null) {
       handActionLogs[`${session.id}_${num}`] = log;
     }
     stats.handActionLogs = handActionLogs;
+    // Apply renames in single-session path too
+    if (playerConfig?.renames) {
+      for (const canonical of Object.keys(stats.players)) {
+        const display = resolveDisplayName(canonical, playerConfig);
+        if (display !== canonical) {
+          stats.players[display] = stats.players[canonical];
+          stats.players[display].name = display;
+          delete stats.players[canonical];
+        }
+      }
+    }
     return stats;
   }
 
@@ -179,6 +190,18 @@ export function mergeSessions(sessions, playerConfig = null) {
       ? +(p.premiumHandsShown / p.allHandsShown * 100).toFixed(1)
       : 0;
     p.tightness = Math.max(0, Math.min(100, Math.round(100 - p.vpip)));
+  }
+
+  // Apply renames: re-key players from canonical names to display names
+  if (playerConfig?.renames) {
+    for (const canonical of Object.keys(players)) {
+      const display = resolveDisplayName(canonical, playerConfig);
+      if (display !== canonical) {
+        players[display] = players[canonical];
+        players[display].name = display;
+        delete players[canonical];
+      }
+    }
   }
 
   return { players, handCount, handActionLogs };

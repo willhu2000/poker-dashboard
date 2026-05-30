@@ -60,7 +60,7 @@ function computeSummary(sessions, config) {
   return { totalHands, viewerNet, hasViewer, biggestPotWon, worstBadBeat };
 }
 
-export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange }) {
+export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange, viewerName }) {
   const inputRef = useRef(null);
   const draggingRef = useRef(false);
 
@@ -114,7 +114,7 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
     <div className="sessions-page">
       <div className="sessions-header">
         <div>
-          <h1>♠ Poker Dashboard</h1>
+          <h1>{viewerName ? <>♠ <span className="title-gradient">{viewerName}'s</span> Poker Dashboard</> : '♠ Poker Dashboard'}</h1>
           <div style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>Weekly home game tracker</div>
         </div>
       </div>

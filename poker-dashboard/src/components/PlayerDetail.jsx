@@ -248,11 +248,34 @@ function handKey(c1, c2) {
   return hi + lo + (suited ? 's' : 'o');
 }
 
+// Quantized color stops: blue → purple → magenta → hot pink
+const RANGE_STOPS = [
+  [30, 80, 220],   // 0: blue
+  [70, 60, 200],   // 1
+  [110, 50, 190],  // 2
+  [145, 40, 180],  // 3
+  [175, 35, 165],  // 4
+  [200, 30, 150],  // 5
+  [220, 28, 130],  // 6
+  [235, 30, 110],  // 7
+  [245, 30, 90],   // 8
+  [255, 40, 100],  // 9: hot pink
+];
+
 function cellBg(count, maxCount) {
-  if (!count || !maxCount) return '#16192a';
+  if (!count || !maxCount) return '#1e2035';
+  if (maxCount <= 10) {
+    // Quantized: pick a distinct stop for each count
+    const idx = Math.min(count, RANGE_STOPS.length) - 1;
+    const [r, g, b] = RANGE_STOPS[Math.round(idx * (RANGE_STOPS.length - 1) / Math.max(maxCount - 1, 1))];
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  // Smooth interpolation for larger counts
   const t = Math.sqrt(count / maxCount);
-  const hue = Math.round(260 + t * 100) % 360;
-  return `hsl(${hue}, ${Math.round(45 + t * 50)}%, ${Math.round(22 + t * 38)}%)`;
+  const r = Math.round(30 + t * (255 - 30));
+  const g = Math.round(80 + t * (40 - 80));
+  const b = Math.round(220 + t * (100 - 220));
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function RangeGrid({ rangeHands }) {
@@ -264,23 +287,48 @@ function RangeGrid({ rangeHands }) {
   }
   const maxCount = Math.max(1, ...Object.values(freq));
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${RANKS_DESC.length}, 1fr)`, gap: 2, minWidth: 300, maxWidth: 520, margin: '0 auto' }}>
+    <div className="range-grid-wrap">
+      <div className="range-grid">
         {RANKS_DESC.map((rowR, i) => RANKS_DESC.map((colR, j) => {
           const key = i === j ? rowR + colR : i < j ? rowR + colR + 's' : colR + rowR + 'o';
           const count = freq[key] || 0;
           const label = i === j ? rowR + rowR : i < j ? rowR + colR + 's' : colR + rowR + 'o';
           return (
             <div key={key} title={`${label}: ${count} hand${count !== 1 ? 's' : ''}`}
-              style={{ background: cellBg(count, maxCount), borderRadius: 2, aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.55rem', color: count > 0 ? '#fff' : 'var(--muted)', fontWeight: count > 0 ? 600 : 400, opacity: count > 0 ? 1 : 0.45 }}>
+              className={`range-cell${count > 0 ? ' played' : ''}`}
+              style={{ background: cellBg(count, maxCount), opacity: count > 0 ? 0.35 + 0.65 * Math.sqrt(count / maxCount) : undefined }}>
               {label}
             </div>
           );
         }))}
       </div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.7rem', textAlign: 'center', marginTop: 6 }}>
-        Darker = played more · hover for count · suited upper-right · pairs diagonal
-      </p>
+      <div className="range-legend">
+        {maxCount <= 10 ? (
+          <div className="range-legend-steps">
+            <div className="range-step">
+              <div className="range-swatch" style={{ background: '#1e2035' }} />
+              <span>0</span>
+            </div>
+            {Array.from({ length: maxCount }, (_, i) => (
+              <div key={i + 1} className="range-step">
+                <div className="range-swatch" style={{ background: cellBg(i + 1, maxCount) }} />
+                <span>{i + 1}</span>
+              </div>
+            ))}
+            <span className="range-legend-caption">times played</span>
+          </div>
+        ) : (
+          <div className="range-legend-bar">
+            <span className="range-legend-label">0</span>
+            <div className="range-legend-gradient" />
+            <span className="range-legend-label">{maxCount}</span>
+            <span className="range-legend-caption">times played</span>
+          </div>
+        )}
+        <p className="range-legend-help">
+          Suited upper-right · pairs diagonal · offsuit lower-left
+        </p>
+      </div>
     </div>
   );
 }
@@ -529,8 +577,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
               ⓘ {showRadarInfo ? 'Hide' : 'How it\'s scored'}
             </button>
           </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <RadarChart data={radarData} outerRadius={80}>
+          <ResponsiveContainer width="100%" height={260}>
+            <RadarChart data={radarData} outerRadius={80} cy="55%">
               <PolarGrid stroke="var(--border)" />
               <PolarAngleAxis dataKey="subject" tick={{ fill: '#7c82a0', fontSize: 11 }} />
               <Radar dataKey="value" stroke="#6c63ff" fill="#6c63ff" fillOpacity={0.3} />
@@ -558,14 +606,14 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
             <p style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: 6 }}>
               Click a slice or legend item to see all hands in that category.
             </p>
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart margin={{ top: 16, right: 0, bottom: 0, left: 0 }}>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart margin={{ top: 24, right: 0, bottom: 0, left: 0 }}>
                 <Pie
                   data={catData}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="42%"
+                  cy="45%"
                   outerRadius={85}
                   onClick={(d) => toggleCategory(d.name)}
                   style={{ cursor: 'pointer' }}

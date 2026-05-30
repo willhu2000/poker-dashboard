@@ -100,7 +100,8 @@ function GlossaryPanel() {
 export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], viewerNames = [], onBack, onViewMerged, onViewTrends, onUpdateSessions, onAddSession, error }) {
   const { players, handCount } = data;
   const playerList = Object.values(players).sort((a, b) => b.netChips - a.netChips);
-  const [selectedPlayer, setSelectedPlayer] = useState(playerList[0]?.name || null);
+  const defaultPlayer = (viewerNames.length > 0 && playerList.find(p => viewerNames.includes(p.name)))?.name || playerList[0]?.name || null;
+  const [selectedPlayer, setSelectedPlayer] = useState(defaultPlayer);
   const [showSelectorMenu, setShowSelectorMenu] = useState(false);
   const addInputRef = useRef(null);
 
