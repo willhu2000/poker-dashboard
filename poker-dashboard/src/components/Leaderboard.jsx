@@ -21,10 +21,6 @@ export default function Leaderboard({ players, onSelect, selected }) {
           const tight = p.vpip < 25;
           const loose = p.vpip > 50;
           const agg = p.af > 2;
-          const style = [
-            tight ? 'Tight' : loose ? 'Loose' : 'Semi-Loose',
-            agg ? 'Aggressive' : p.af < 1 ? 'Passive' : 'Balanced',
-          ].join(' / ');
 
           return (
             <tr

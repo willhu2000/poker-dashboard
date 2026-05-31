@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { classifyHand } from '../parser.js';
 import { bestHand } from '../handEval.js';
 import CoachingReport from './CoachingReport.jsx';
 import {
@@ -238,6 +237,17 @@ function ActionLog({ log }) {
   );
 }
 
+// Sortable table-header cell. Hoisted to module scope — defining it inside the
+// component would create a fresh component type on every render.
+function SortTh({ col, children, style, sortCol, sortDir, onSort }) {
+  const active = sortCol === col;
+  return (
+    <th onClick={() => onSort(col)} className={`sortable${active ? ' sort-active' : ''}`} style={style}>
+      {children} <span style={{ opacity: 0.5, fontSize: '0.7em' }}>{active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+    </th>
+  );
+}
+
 // A clickable "biggest pot" row that expands to show the hand's play-by-play.
 function BigPotCard({ kind, rank, h, isMerged, amountNode, extraDetails, expanded, onToggle, log }) {
   return (
@@ -316,6 +326,11 @@ function cellBg(count, maxCount) {
 }
 
 function RangeGrid({ rangeHands }) {
+  // Click a "times played" key to highlight only the hands played that many
+  // times (and dim the rest); click again to clear. Mirrors the pie's toggle.
+  const [selectedCount, setSelectedCount] = useState(null);
+  const toggleCount = (n) => setSelectedCount(prev => (prev === n ? null : n));
+
   const freq = {};
   for (const { c1, c2 } of rangeHands) {
     if (!c1 || !c2) continue;
@@ -330,10 +345,15 @@ function RangeGrid({ rangeHands }) {
           const key = i === j ? rowR + colR : i < j ? rowR + colR + 's' : colR + rowR + 'o';
           const count = freq[key] || 0;
           const label = i === j ? rowR + rowR : i < j ? rowR + colR + 's' : colR + rowR + 'o';
+          const selecting = selectedCount != null;
+          const isMatch = selecting && count === selectedCount;
+          let opacity = count > 0 ? 0.35 + 0.65 * Math.sqrt(count / maxCount) : undefined;
+          if (selecting && !isMatch) opacity = (opacity ?? 1) * 0.15;     // dim non-matching
+          else if (isMatch) opacity = count > 0 ? Math.max(opacity, 0.92) : 0.85; // emphasize match
           return (
             <div key={key} title={`${label}: ${count} hand${count !== 1 ? 's' : ''}`}
-              className={`range-cell${count > 0 ? ' played' : ''}`}
-              style={{ background: cellBg(count, maxCount), opacity: count > 0 ? 0.35 + 0.65 * Math.sqrt(count / maxCount) : undefined }}>
+              className={`range-cell${count > 0 ? ' played' : ''}${isMatch ? ' rc-match' : ''}`}
+              style={{ background: cellBg(count, maxCount), opacity }}>
               {label}
             </div>
           );
@@ -342,14 +362,17 @@ function RangeGrid({ rangeHands }) {
       <div className="range-legend">
         {maxCount <= 10 ? (
           <div className="range-legend-steps">
-            <div className="range-step">
-              <div className="range-swatch" style={{ background: '#1e2035' }} />
-              <span>0</span>
-            </div>
-            {Array.from({ length: maxCount }, (_, i) => (
-              <div key={i + 1} className="range-step">
-                <div className="range-swatch" style={{ background: cellBg(i + 1, maxCount) }} />
-                <span>{i + 1}</span>
+            {Array.from({ length: maxCount + 1 }, (_, n) => (
+              <div
+                key={n}
+                className={`range-step clickable${selectedCount === n ? ' selected' : ''}`}
+                onClick={() => toggleCount(n)}
+                role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCount(n); } }}
+                title={`Highlight hands played ${n} time${n !== 1 ? 's' : ''}`}
+              >
+                <div className="range-swatch" style={{ background: n === 0 ? '#1e2035' : cellBg(n, maxCount) }} />
+                <span>{n}</span>
               </div>
             ))}
             <span className="range-legend-caption">times played</span>
@@ -363,6 +386,7 @@ function RangeGrid({ rangeHands }) {
           </div>
         )}
         <p className="range-legend-help">
+          {maxCount <= 10 && <>Click a count to highlight those hands · </>}
           Suited upper-right · pairs diagonal · offsuit lower-left
         </p>
       </div>
@@ -507,11 +531,14 @@ function SimpleStats({ player: p, biggestWins, biggestSplits, biggestLosses, bad
   );
 }
 
-// ── Chip count over time ──────────────────────────────────────────────────────
-// Builds a chronological series of the player's stack entering each hand. Between
-// sessions the player has logged out / cashed out, so the line resets to 0 before
-// the next session's buy-in — each session reads as its own segment.
-function buildChipTimeline(handsHistory) {
+// ── Chip count / net profit over time ─────────────────────────────────────────
+// Builds a chronological series of the player's stack entering each hand.
+//   mode 'stack': the table stack, which resets to 0 between sessions (each
+//     log-out / cash-out) — every session reads as its own segment.
+//   mode 'net':   cumulative profit carried across sessions (no reset). Per
+//     session, profit = stack − the first stack seen that session; the running
+//     total carries forward. (Mid-session rebuys can distort this.)
+function buildChipTimeline(handsHistory, mode) {
   const hands = handsHistory
     .filter(h => h.stack != null)
     .slice()
@@ -525,15 +552,35 @@ function buildChipTimeline(handsHistory) {
 
   const points = [];
   let i = 0;
+
+  if (mode === 'net') {
+    let prevSession = null;
+    let carried = 0;     // net banked from completed prior sessions
+    let baseline = 0;    // first stack of the current session
+    let sessionNet = 0;
+    for (const h of hands) {
+      const sid = h.sessionId ?? '_single';
+      if (sid !== prevSession) {
+        if (prevSession !== null) carried += sessionNet;
+        baseline = h.stack;
+        sessionNet = 0;
+      }
+      sessionNet = h.stack - baseline;
+      points.push({ i: i++, value: carried + sessionNet, kind: 'net', hand: h.num, sessionDate: h.sessionDate });
+      prevSession = sid;
+    }
+    return points;
+  }
+
   let prevSession = null;
   let prevDate = null;
   for (const h of hands) {
     const sid = h.sessionId ?? '_single';
     if (prevSession !== null && sid !== prevSession) {
       // Logged out of the previous session → drop to 0 before the next buy-in.
-      points.push({ i: i++, stack: 0, reset: true, sessionDate: prevDate });
+      points.push({ i: i++, value: 0, reset: true, sessionDate: prevDate });
     }
-    points.push({ i: i++, stack: h.stack, hand: h.num, sessionDate: h.sessionDate });
+    points.push({ i: i++, value: h.stack, hand: h.num, sessionDate: h.sessionDate });
     prevSession = sid;
     prevDate = h.sessionDate;
   }
@@ -543,33 +590,42 @@ function buildChipTimeline(handsHistory) {
 const ChipTip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
+  if (d.reset) return <div className="custom-tooltip"><div>Cashed out — stack reset to 0</div></div>;
+  const v = d.value;
+  const headline = d.kind === 'net'
+    ? `${v >= 0 ? '+' : ''}${v.toLocaleString()} net`
+    : `${v.toLocaleString()} chips`;
   return (
     <div className="custom-tooltip">
-      {d.reset
-        ? <div>Cashed out — stack reset to 0</div>
-        : <>
-            <div className="label">{d.stack.toLocaleString()} chips</div>
-            <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
-              Hand #{d.hand}{d.sessionDate ? ` · ${fmtDate(d.sessionDate)}` : ''}
-            </div>
-          </>}
+      <div className="label" style={d.kind === 'net' ? { color: v >= 0 ? 'var(--win)' : 'var(--lose)' } : undefined}>{headline}</div>
+      <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
+        Hand #{d.hand}{d.sessionDate ? ` · ${fmtDate(d.sessionDate)}` : ''}
+      </div>
     </div>
   );
 };
 
 function ChipTimeline({ handsHistory, isViewer = false }) {
-  const data = buildChipTimeline(handsHistory);
+  const [mode, setMode] = useState('stack'); // 'stack' | 'net'
+  const data = buildChipTimeline(handsHistory, mode);
   if (data.length < 2) return null;
   const sessionCount = new Set(
     handsHistory.filter(h => h.stack != null).map(h => h.sessionId ?? '_single')
   ).size;
 
+  const who = isViewer ? 'your' : 'their';
+  const subtitle = mode === 'net'
+    ? `cumulative ${who} net profit (carries across sessions)`
+    : `${who} stack entering each hand${sessionCount > 1 ? ', resets to 0 between sessions' : ''}`;
+
   return (
     <div className="chip-timeline">
-      <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 16 }}>
-        📈 Chip Count Over Time
-        <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.78rem', marginLeft: 8 }}>
-          — {isViewer ? 'your' : 'their'} stack entering each hand{sessionCount > 1 ? ', resets to 0 between sessions' : ''}
+      <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 16, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>📈 {mode === 'net' ? 'Net Profit Over Time' : 'Chip Count Over Time'}</span>
+        <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.78rem' }}>— {subtitle}</span>
+        <span className="chip-mode-toggle" style={{ marginLeft: 'auto' }}>
+          <button className={mode === 'stack' ? 'active' : ''} onClick={() => setMode('stack')}>Stack</button>
+          <button className={mode === 'net' ? 'active' : ''} onClick={() => setMode('net')}>Net profit</button>
         </span>
       </div>
       <ResponsiveContainer width="100%" height={240}>
@@ -579,7 +635,7 @@ function ChipTimeline({ handsHistory, isViewer = false }) {
           <YAxis tick={{ fill: '#7c82a0', fontSize: 11 }} />
           <Tooltip content={<ChipTip />} />
           <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />
-          <Line type="linear" dataKey="stack" stroke="#6c63ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+          <Line type="linear" dataKey="value" stroke={mode === 'net' ? '#00d4aa' : '#6c63ff'} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -587,7 +643,7 @@ function ChipTimeline({ handsHistory, isViewer = false }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PlayerDetail({ player: p, isMerged = false, isViewer = false, handActionLogs = {} }) {
+export default function PlayerDetail({ player: p, isMerged = false, isViewer = false, handActionLogs = {}, onRename = null }) {
   const [showRadarInfo, setShowRadarInfo] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [handFilter, setHandFilter] = useState('all');
@@ -601,6 +657,11 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
   // expanded to show its play-by-play. Keyed `${section}-${index}`.
   const [expandedKeyHand, setExpandedKeyHand] = useState(null);
   const toggleKeyHand = (key) => setExpandedKeyHand(prev => (prev === key ? null : key));
+  // Inline rename (only when an onRename handler is supplied).
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  function startRename() { setRenameValue(p.name); setRenaming(true); }
+  function commitRename() { onRename?.(renameValue); setRenaming(false); }
 
   // Look up the action log for a hand entry. New sessions store logs in the
   // top-level handActionLogs map (keyed as `${sessionId}_${num}` when a sessionId
@@ -702,16 +763,6 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
     else { setSortCol(col); setSortDir(col === 'hand' || col === 'strength' || col === 'pot' ? 'desc' : 'asc'); }
   }
 
-  // Sortable column header
-  function SortTh({ col, children, style }) {
-    const active = sortCol === col;
-    return (
-      <th onClick={() => handleSortClick(col)} className={`sortable${active ? ' sort-active' : ''}`} style={style}>
-        {children} <span style={{opacity:0.5,fontSize:'0.7em'}}>{active ? (sortDir==='asc' ? '↑' : '↓') : '↕'}</span>
-      </th>
-    );
-  }
-
   // Filtered + sorted hand list
   const filteredHands = (() => {
     let result = handsHistory.filter(h => {
@@ -748,7 +799,27 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
     <div className="player-detail">
       {/* Header row with name + detail mode toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-        <h2 style={{ margin: 0, flex: 1 }}>{p.name}</h2>
+        {renaming ? (
+          <div className="pd-rename" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              className="pd-rename-input"
+              type="text"
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
+              autoFocus
+            />
+            <button className="pd-rename-btn active" onClick={commitRename} title="Save name">OK</button>
+            <button className="pd-rename-btn" onClick={() => setRenaming(false)} title="Cancel">✕</button>
+          </div>
+        ) : (
+          <h2 style={{ margin: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {p.name}
+            {onRename && (
+              <button className="pd-rename-pencil" onClick={startRename} title="Rename player" aria-label="Rename player">✎</button>
+            )}
+          </h2>
+        )}
         <button
           className={`detail-toggle-btn${detailMode ? ' active' : ''}`}
           onClick={() => setDetailMode(d => !d)}
@@ -1279,13 +1350,13 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
           <table className="hand-table">
             <thead>
               <tr>
-                <SortTh col="hand">Hand #</SortTh>
-                {isMerged && <SortTh col="session">Session</SortTh>}
-                <SortTh col="cards">Cards</SortTh>
-                <SortTh col="type">Type</SortTh>
-                <SortTh col="result">Result</SortTh>
-                <SortTh col="strength">Hand Strength</SortTh>
-                <SortTh col="pot">Pot</SortTh>
+                <SortTh col="hand" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Hand #</SortTh>
+                {isMerged && <SortTh col="session" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Session</SortTh>}
+                <SortTh col="cards" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Cards</SortTh>
+                <SortTh col="type" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Type</SortTh>
+                <SortTh col="result" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Result</SortTh>
+                <SortTh col="strength" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Hand Strength</SortTh>
+                <SortTh col="pot" sortCol={sortCol} sortDir={sortDir} onSort={handleSortClick}>Pot</SortTh>
                 <th style={{ width: 24 }}></th>
               </tr>
             </thead>

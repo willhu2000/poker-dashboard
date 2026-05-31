@@ -1,0 +1,41 @@
+name: poker-dashboard CI
+
+# Run on pushes and PRs, but only when the poker-dashboard app (or this workflow)
+# changes — the other top-level projects don't share its tooling.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'poker-dashboard/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'poker-dashboard/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: poker-dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: poker-dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

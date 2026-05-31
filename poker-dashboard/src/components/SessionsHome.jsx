@@ -74,7 +74,6 @@ function computeSummary(sessions, config) {
 
 export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange, viewerName }) {
   const inputRef = useRef(null);
-  const draggingRef = useRef(false);
 
   const handleFiles = useCallback((files) => {
     const file = files[0];
@@ -141,9 +140,9 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
             <button
               className="btn btn-ghost"
               style={{ fontSize: '0.82rem' }}
-              onClick={() => {
+              onClick={async () => {
                 if (confirm('Reset will delete all stored sessions and reload the bundled samples. Continue?')) {
-                  clearAllSessions();
+                  await clearAllSessions();
                   location.reload();
                 }
               }}

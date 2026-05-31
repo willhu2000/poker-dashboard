@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from 'react';
 import Leaderboard from './Leaderboard.jsx';
 import PlayerDetail from './PlayerDetail.jsx';
 import OverviewCharts from './OverviewCharts.jsx';
+import { resolveCanonicalFromDisplay } from '../playerConfig.js';
+import { playersToCsv, buildTextSummary, downloadFile, safeFileName } from '../exportSummary.js';
 
 // Format a signed chip total: "+125" for wins, "-400" for losses, "0" for break-even.
 // Avoids the "+-400" bug from naively prepending "+".
@@ -97,15 +99,47 @@ function GlossaryPanel() {
   );
 }
 
-export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], viewerNames = [], onBack, onViewMerged, onViewTrends, onUpdateSessions, onAddSession, error }) {
+export default function Dashboard({ data, fileName, isMerged, sessionCount, selectedIds = [], allSessions = [], viewerNames = [], onBack, onViewMerged, onViewTrends, onUpdateSessions, onAddSession, playerConfig = null, onPlayerConfigChange, error }) {
   const { players, handCount } = data;
   const playerList = Object.values(players).sort((a, b) => b.netChips - a.netChips);
   const defaultPlayer = (viewerNames.length > 0 && playerList.find(p => viewerNames.includes(p.name)))?.name || playerList[0]?.name || null;
   const [selectedPlayer, setSelectedPlayer] = useState(defaultPlayer);
   const [showSelectorMenu, setShowSelectorMenu] = useState(false);
+  const [copied, setCopied] = useState(false);
   const addInputRef = useRef(null);
 
+  function handleExportCsv() {
+    downloadFile(safeFileName(fileName, 'csv'), playersToCsv(playerList), 'text/csv');
+  }
+
+  async function handleCopySummary() {
+    const text = buildTextSummary(playerList, fileName, handCount);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard blocked (e.g. insecure context) — fall back to a download.
+      downloadFile(safeFileName(fileName, 'txt'), text, 'text/plain');
+    }
+  }
+
   const selected = players[selectedPlayer];
+
+  // Rename a player from the deep-dive header. `displayName` is what the UI shows
+  // (already alias/rename-resolved); map it back to the canonical name to set the
+  // rename, then keep the current selection pointed at the new display name.
+  function renamePlayer(displayName, rawNewName) {
+    if (!onPlayerConfigChange) return;
+    const newName = (rawNewName || '').trim();
+    const canonical = resolveCanonicalFromDisplay(displayName, playerConfig);
+    const renames = { ...(playerConfig?.renames || {}) };
+    if (!newName || newName === canonical) delete renames[canonical];
+    else renames[canonical] = newName;
+    onPlayerConfigChange({ ...(playerConfig || {}), renames });
+    const resultName = (!newName || newName === canonical) ? canonical : newName;
+    if (selectedPlayer === displayName) setSelectedPlayer(resultName);
+  }
 
   const handleSessionToggle = (sessionId, checked) => {
     let newIds;
@@ -170,6 +204,12 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
             + Add Session
           </button>
           <input ref={addInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleAddFile} />
+          <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={handleExportCsv} title="Download per-player stats as CSV">
+            ⬇ Export CSV
+          </button>
+          <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={handleCopySummary} title="Copy a text leaderboard to the clipboard">
+            {copied ? '✓ Copied' : '📋 Copy Summary'}
+          </button>
         </div>
       </div>
 
@@ -240,7 +280,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
         ))}
       </div>
 
-      {selected && <PlayerDetail player={selected} isMerged={isMerged} isViewer={viewerNames.includes(selected.name)} handActionLogs={data.handActionLogs || {}} />}
+      {selected && <PlayerDetail player={selected} isMerged={isMerged} isViewer={viewerNames.includes(selected.name)} handActionLogs={data.handActionLogs || {}} onRename={onPlayerConfigChange ? (newName) => renamePlayer(selected.name, newName) : null} />}
 
       <hr className="divider" />
 

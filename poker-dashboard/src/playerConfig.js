@@ -39,6 +39,18 @@ export function resolveDisplayName(canonicalName, config) {
   return config.renames[canonicalName] || canonicalName;
 }
 
+/** Inverse of resolveDisplayName: given a shown display name, find the canonical
+ * name it came from (the key used in `renames`). Falls back to the name itself
+ * when it isn't a rename. Used to rename a player from views that only see the
+ * already-resolved display name. */
+export function resolveCanonicalFromDisplay(displayName, config) {
+  const renames = config?.renames || {};
+  for (const [canonical, display] of Object.entries(renames)) {
+    if (display === displayName) return canonical;
+  }
+  return displayName;
+}
+
 /** Get all unique canonical player names across all sessions. */
 export function getAllCanonicalPlayers(sessions, config) {
   const names = new Set();

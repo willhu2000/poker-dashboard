@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import './index.css';
 import { parseLog, extractGameDate, extractPlayerNames, formatSessionName, hashContent } from './parser.js';
 import { analyseLog } from './stats.js';
-import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate, migrateStoredSessions } from './sessions.js';
+import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate, initSessions } from './sessions.js';
 import { loadPlayerConfig, savePlayerConfig, resolveAlias, resolveDisplayName } from './playerConfig.js';
 import Dashboard from './components/Dashboard.jsx';
 import SessionsHome from './components/SessionsHome.jsx';
@@ -43,13 +43,8 @@ function resolveViewerNames(sessions, stats, playerConfig = null) {
 }
 
 export default function App() {
-  // Upgrade any pre-current sessions that kept their raw CSV before the first
-  // read, so they pick up newly-tracked data (stacks, corrected dates) without a
-  // manual re-upload. Runs once during initial render.
-  const [sessions, setSessions] = useState(() => {
-    migrateStoredSessions();
-    return loadSessions();
-  });
+  const [sessions, setSessions] = useState([]);
+  const [ready, setReady] = useState(false); // becomes true once IndexedDB load finishes
   const [view, setView] = useState(null); // null | { type:'single', id } | { type:'merged', selectedIds:[] }
   const [error, setError] = useState(null);
   const [playerConfig, setPlayerConfig] = useState(() => loadPlayerConfig());
@@ -65,31 +60,36 @@ export default function App() {
     setPlayerConfig(newConfig);
   }
 
-  // On first launch (no saved sessions), auto-ingest the bundled CSVs.
+  // Load persisted sessions from IndexedDB (self-healing any outdated ones via
+  // their stored rawLog), then — only on a truly empty store — ingest the bundled
+  // sample CSVs. Runs once on mount; the UI waits on `ready`.
   useEffect(() => {
-    if (loadSessions().length > 0) return;
     let cancelled = false;
     (async () => {
       try {
-        for (const url of AUTO_LOAD_LOGS) {
-          const res = await fetch(url);
-          if (!res.ok) continue;
-          const text = await res.text();
-          const hash = hashContent(text);
-          if (isDuplicate(hash)) continue;
-          const rows = parseLog(text);
-          const gameDate = extractGameDate(rows) || new Date();
-          // Bundled samples are Will's — let analyseLog use its built-in
-          // "will*" heuristic by passing no explicit viewerName.
-          const stats = analyseLog(rows);
-          const sessionName = formatSessionName(gameDate);
-          const viewer = Object.keys(stats.players).find(n => n.toLowerCase().startsWith('will')) || null;
-          saveSession(sessionName, stats, gameDate, hash, viewer, text);
+        await initSessions();
+        if (loadSessions().length === 0) {
+          for (const url of AUTO_LOAD_LOGS) {
+            const res = await fetch(url);
+            if (!res.ok) continue;
+            const text = await res.text();
+            const hash = hashContent(text);
+            if (isDuplicate(hash)) continue;
+            const rows = parseLog(text);
+            const gameDate = extractGameDate(rows) || new Date();
+            // Bundled samples are Will's — let analyseLog use its built-in
+            // "will*" heuristic by passing no explicit viewerName.
+            const stats = analyseLog(rows);
+            const sessionName = formatSessionName(gameDate);
+            const viewer = Object.keys(stats.players).find(n => n.toLowerCase().startsWith('will')) || null;
+            saveSession(sessionName, stats, gameDate, hash, viewer, text);
+          }
         }
-        if (!cancelled) setSessions(loadSessions());
       } catch (err) {
-        console.error('Auto-load failed', err);
-        if (!cancelled) setError('Auto-load failed: ' + err.message);
+        console.error('Startup load failed', err);
+        if (!cancelled) setError('Failed to load saved sessions: ' + err.message);
+      } finally {
+        if (!cancelled) { setSessions(loadSessions()); setReady(true); }
       }
     })();
     return () => { cancelled = true; };
@@ -166,6 +166,16 @@ export default function App() {
     />
   );
 
+  // Wait for IndexedDB to load before rendering (avoids a flash of the empty
+  // state / spurious sample auto-load while the async read is in flight).
+  if (!ready) {
+    return (
+      <div className="app">
+        <div className="loading-screen">Loading sessions…</div>
+      </div>
+    );
+  }
+
   if (view?.type === 'trends') {
     const currentSessions = loadSessions();
     return (
@@ -210,6 +220,8 @@ export default function App() {
           onViewTrends={() => setView({ type: 'trends' })}
           onUpdateSessions={(ids) => setView({ type: 'merged', selectedIds: ids })}
           onAddSession={handleAddSession}
+          playerConfig={playerConfig}
+          onPlayerConfigChange={handlePlayerConfigChange}
           error={error}
         />
         {modal}

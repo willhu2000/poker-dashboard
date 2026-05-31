@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, CartesianGrid,
 } from 'recharts';
 import { resolveAlias, resolveDisplayName } from '../playerConfig.js';
@@ -24,7 +24,7 @@ const METRICS = [
 
 function fmtDate(iso) {
   if (!iso) return '—';
-  const [y, m, d] = iso.split('-');
+  const [, m, d] = iso.split('-');
   return `${m}-${d}`;
 }
 
@@ -65,11 +65,13 @@ const Tip = ({ active, payload, label }) => {
 };
 
 export default function TrendsView({ sessions, onBack, playerConfig }) {
-  // Resolve a raw CSV name → display name (alias then rename)
-  const displayName = (raw) => {
+  // Resolve a raw CSV name → display name (alias then rename). Memoised so it has
+  // a stable identity across renders (only changes with playerConfig), letting the
+  // memos below depend on it directly.
+  const displayName = useCallback((raw) => {
     const canonical = resolveAlias(raw, playerConfig);
     return resolveDisplayName(canonical, playerConfig);
-  };
+  }, [playerConfig]);
 
   // Sessions come newest-first from loadSessions(); sort ascending by gameDate.
   const orderedSessions = useMemo(() => {
@@ -92,7 +94,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
     return Object.entries(totals)
       .map(([name, hands]) => ({ name, hands }))
       .sort((a, b) => b.hands - a.hands);
-  }, [orderedSessions, playerConfig]);
+  }, [orderedSessions, displayName]);
 
   const [selected, setSelected] = useState(() => allPlayers.map(p => p.name));
 
@@ -131,7 +133,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
       });
     }
     return out;
-  }, [orderedSessions, selected, playerConfig]);
+  }, [orderedSessions, selected, displayName]);
 
   // First→last delta per (player, metric), skipping sessions where the player wasn't dealt in.
   const movement = useMemo(() => {
@@ -158,7 +160,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
       rows.push({ name, sessionsPlayed, deltas });
     }
     return rows;
-  }, [orderedSessions, selected, playerConfig]);
+  }, [orderedSessions, selected, displayName]);
 
   if (orderedSessions.length < 2) {
     return (
@@ -189,7 +191,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
       <div className="trends-picker">
         <div className="trends-picker-label">Compare players:</div>
         <div className="trends-picker-chips">
-          {allPlayers.map((p, i) => {
+          {allPlayers.map((p) => {
             const isSel = selected.includes(p.name);
             const color = COLORS[allPlayers.findIndex(x => x.name === p.name) % COLORS.length];
             return (

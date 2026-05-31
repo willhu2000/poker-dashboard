@@ -1,8 +1,9 @@
 import { resolveAlias, resolveDisplayName } from './playerConfig.js';
 import { parseLog, extractGameDate, toLocalDateStr } from './parser.js';
 import { analyseLog } from './stats.js';
+import { idbAvailable, idbGetAll, idbPut, idbPutMany, idbDelete, idbClear } from './idb.js';
 
-const KEY = 'poker-sessions';
+const KEY = 'poker-sessions'; // legacy localStorage key (data is migrated into IndexedDB)
 
 // Bump when the shape of the saved `stats` payload changes in a way that affects
 // derived numbers users see.
@@ -11,43 +12,133 @@ const KEY = 'poker-sessions';
 //   v3: per-hand `stack` (chip-count graph) + local game date; sessions now keep
 //       the raw CSV (`rawLog`) so future bumps re-derive everything automatically.
 //
-// Sessions that carry a `rawLog` self-heal on load (migrateStoredSessions re-runs
-// the parser/analyser), so they NEVER need a manual re-upload again. Only legacy
-// sessions saved without a rawLog can't auto-upgrade — those are what
-// hasOutdatedSessions() flags. (Split fields are still back-filled from stored
-// action logs for them too; see backfillSplitFields.)
+// Sessions that carry a `rawLog` self-heal on load (initSessions re-runs the
+// parser/analyser via migrateRecords), so they NEVER need a manual re-upload
+// again. Only legacy sessions saved without a rawLog can't auto-upgrade — those
+// are what hasOutdatedSessions() flags. (Split fields are still back-filled from
+// stored action logs for them too; see backfillSplitFields.)
 export const STATS_SCHEMA_VERSION = 3;
 
-export function loadSessions() {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-export function hasOutdatedSessions() {
-  return loadSessions().some(s => (s.schemaVersion || 1) < STATS_SCHEMA_VERSION);
-}
-
-export function clearAllSessions() {
-  localStorage.removeItem(KEY);
-}
+// ── In-memory session cache ───────────────────────────────────────────────────
+// IndexedDB is async, but the rest of the app expects synchronous reads. We keep
+// a synchronous in-memory mirror (the cache) as the source of truth for the UI
+// and persist changes to IndexedDB in the background. The cache holds "lite"
+// sessions WITHOUT the bulky `rawLog` (that stays in IndexedDB only, read back
+// just for schema self-healing at startup), so cloning the cache stays cheap.
+let cache = [];
+let usingIDB = true; // false → fall back to localStorage (IndexedDB unavailable)
+let initPromise = null; // memoised so init runs exactly once (StrictMode-safe)
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-export function isDuplicate(contentHash) {
-  return loadSessions().some(s => s.contentHash === contentHash);
+function byNewest(a, b) {
+  return (b.uploadedAt || '').localeCompare(a.uploadedAt || '');
 }
 
-// `rawLog` is the original CSV text. Persisting it lets future schema changes
-// re-derive any previously-discarded data (stacks, dates, …) without asking the
-// user to re-upload. It can be large, so if localStorage rejects the write we
-// retry without it — the session still works, it just loses self-healing.
+// Strip the heavy rawLog before a session goes into the in-memory cache.
+function lite(session) {
+  // eslint-disable-next-line no-unused-vars
+  const { rawLog, ...rest } = session;
+  return rest;
+}
+
+function readLegacyLocalStorage() {
+  try { return JSON.parse(localStorage.getItem(KEY) || '[]'); }
+  catch { return []; }
+}
+
+function writeLocalStorage() {
+  // Fallback persistence when IndexedDB is unavailable. Stores lite sessions only.
+  try { localStorage.setItem(KEY, JSON.stringify(cache)); return true; }
+  catch { return false; }
+}
+
+// Re-analyse records that predate the current schema but kept their rawLog,
+// mutating stats/date/schemaVersion in place. Returns the records that changed.
+function migrateRecords(records) {
+  const changed = [];
+  for (const s of records) {
+    if (!s.rawLog) continue;
+    if ((s.schemaVersion || 1) >= STATS_SCHEMA_VERSION) continue;
+    try {
+      const rows = parseLog(s.rawLog);
+      s.stats = analyseLog(rows, s.viewerName || null);
+      s.handCount = s.stats.handCount;
+      s.playerNames = Object.keys(s.stats.players);
+      const gd = extractGameDate(rows);
+      if (gd) s.gameDate = toLocalDateStr(gd);
+      s.schemaVersion = STATS_SCHEMA_VERSION;
+      changed.push(s);
+    } catch (e) {
+      console.error('Re-analysis failed for session', s.id, e);
+    }
+  }
+  return changed;
+}
+
+// Load persisted sessions into the cache. Await this once at startup before the
+// app reads sessions. Migrates legacy localStorage data into IndexedDB the first
+// time, and self-heals outdated sessions from their stored rawLog. Memoised, so
+// repeated calls (e.g. StrictMode's double-invoked effects) won't reset a cache
+// that newer writes have already populated.
+export function initSessions() {
+  if (initPromise) return initPromise;
+  initPromise = doInit();
+  return initPromise;
+}
+
+async function doInit() {
+  let records = [];
+  if (idbAvailable()) {
+    try {
+      records = await idbGetAll();
+      if (records.length === 0) {
+        const legacy = readLegacyLocalStorage(); // one-time pre-IndexedDB migration
+        if (legacy.length) {
+          await idbPutMany(legacy);
+          records = legacy;
+          localStorage.removeItem(KEY); // now lives in IndexedDB
+        }
+      }
+    } catch (e) {
+      console.error('IndexedDB unavailable, falling back to localStorage', e);
+      usingIDB = false;
+      records = readLegacyLocalStorage();
+    }
+  } else {
+    usingIDB = false;
+    records = readLegacyLocalStorage();
+  }
+
+  const changed = migrateRecords(records);
+  records.sort(byNewest);
+  cache = records.map(lite);
+  if (changed.length && usingIDB) {
+    try { await idbPutMany(changed); } catch (e) { console.error('Persist migrated failed', e); }
+  }
+  if (!usingIDB) writeLocalStorage();
+  return loadSessions();
+}
+
+// Synchronous snapshot of the cache. Returns deep clones so callers (e.g.
+// mergeSessions, which tags hands in place) can't corrupt the cached originals.
+export function loadSessions() {
+  return cache.map(s => structuredClone(s));
+}
+
+export function hasOutdatedSessions() {
+  return cache.some(s => (s.schemaVersion || 1) < STATS_SCHEMA_VERSION);
+}
+
+export function isDuplicate(contentHash) {
+  return cache.some(s => s.contentHash === contentHash);
+}
+
+// `rawLog` (the original CSV) is persisted to IndexedDB so future schema changes
+// can re-derive discarded data without a re-upload. It's kept out of the cache.
 export function saveSession(fileName, stats, gameDate = null, contentHash = null, viewerName = null, rawLog = null) {
-  const sessions = loadSessions();
   const id = genId();
   const session = {
     id,
@@ -62,51 +153,28 @@ export function saveSession(fileName, stats, gameDate = null, contentHash = null
     stats,
     rawLog,
   };
-  sessions.unshift(session);
-  try {
-    localStorage.setItem(KEY, JSON.stringify(sessions));
-  } catch {
-    // Most likely QuotaExceededError — drop this session's raw log and retry.
-    delete session.rawLog;
-    localStorage.setItem(KEY, JSON.stringify(sessions));
+  cache.unshift(lite(session));
+  if (usingIDB) {
+    idbPut(session).catch(() => {
+      // Likely a quota error from the large rawLog — retry without it.
+      idbPut(lite(session)).catch(e => console.error('Failed to persist session', e));
+    });
+  } else {
+    writeLocalStorage();
   }
   return id;
 }
 
-// Self-heal sessions that predate the current schema but kept their raw CSV:
-// re-parse + re-analyse from `rawLog` so they pick up newly-tracked data and the
-// corrected local game date. Persists the upgraded sessions and reports whether
-// anything changed (so the caller can refresh). Sessions without a rawLog are
-// left untouched (they're surfaced by hasOutdatedSessions instead).
-export function migrateStoredSessions() {
-  const sessions = loadSessions();
-  let changed = false;
-  for (const s of sessions) {
-    if (!s.rawLog) continue;
-    if ((s.schemaVersion || 1) >= STATS_SCHEMA_VERSION) continue;
-    try {
-      const rows = parseLog(s.rawLog);
-      s.stats = analyseLog(rows, s.viewerName || null);
-      s.handCount = s.stats.handCount;
-      s.playerNames = Object.keys(s.stats.players);
-      const gd = extractGameDate(rows);
-      if (gd) s.gameDate = toLocalDateStr(gd);
-      s.schemaVersion = STATS_SCHEMA_VERSION;
-      changed = true;
-    } catch (e) {
-      console.error('Re-analysis failed for session', s.id, e);
-    }
-  }
-  if (changed) {
-    try { localStorage.setItem(KEY, JSON.stringify(sessions)); }
-    catch (e) { console.error('Failed to persist migrated sessions', e); }
-  }
-  return changed;
+export function deleteSession(id) {
+  cache = cache.filter(s => s.id !== id);
+  if (usingIDB) idbDelete(id).catch(e => console.error('Failed to delete session', e));
+  else writeLocalStorage();
 }
 
-export function deleteSession(id) {
-  const updated = loadSessions().filter(s => s.id !== id);
-  localStorage.setItem(KEY, JSON.stringify(updated));
+export async function clearAllSessions() {
+  cache = [];
+  if (usingIDB) { try { await idbClear(); } catch (e) { console.error('Failed to clear sessions', e); } }
+  else localStorage.removeItem(KEY);
 }
 
 // Reconstruct split-pot fields on a player's hand history for sessions saved

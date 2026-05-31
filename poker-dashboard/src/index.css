@@ -347,6 +347,10 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
   color: #fff;
   font-weight: 600;
 }
+.range-cell.rc-match {
+  outline: 2px solid #fff;
+  outline-offset: -1px;
+}
 .range-legend {
   display: flex;
   flex-direction: column;
@@ -385,6 +389,10 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
   font-size: 0.62rem;
   color: var(--muted);
 }
+.range-step.clickable { cursor: pointer; }
+.range-step.clickable:hover { color: var(--text); }
+.range-step.selected { color: var(--text); font-weight: 700; }
+.range-step.selected .range-swatch { outline: 2px solid #fff; outline-offset: 1px; }
 .range-swatch {
   width: 18px;
   height: 10px;
@@ -1430,6 +1438,36 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
 }
 
 .chip-timeline { margin: 4px 0 18px; }
+.chip-mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.chip-mode-toggle button {
+  background: var(--surface); color: var(--muted); border: none; cursor: pointer;
+  font-size: 0.72rem; font-weight: 600; padding: 4px 10px;
+}
+.chip-mode-toggle button:first-child { border-right: 1px solid var(--border); }
+.chip-mode-toggle button:hover { color: var(--text); }
+.chip-mode-toggle button.active { background: var(--accent); color: #fff; }
+
+.loading-screen {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 60vh; color: var(--muted); font-size: 1rem;
+}
+
+.pd-rename-pencil {
+  background: none; border: none; cursor: pointer; color: var(--muted);
+  font-size: 0.9rem; padding: 2px 4px; border-radius: 4px; line-height: 1;
+}
+.pd-rename-pencil:hover { color: var(--accent); background: var(--surface2); }
+.pd-rename-input {
+  flex: 1; min-width: 0; font-size: 1.1rem; font-weight: 700;
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 6px; padding: 4px 8px;
+}
+.pd-rename-btn {
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+}
+.pd-rename-btn:hover { border-color: var(--accent); }
+.pd-rename-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .bp-rank { font-weight: 700; font-size: 1rem; color: var(--muted); min-width: 28px; }
 .bp-body { flex: 1; min-width: 0; }
 .bp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
