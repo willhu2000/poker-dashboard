@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import './index.css';
 import { parseLog, extractGameDate, extractPlayerNames, formatSessionName, hashContent } from './parser.js';
 import { analyseLog } from './stats.js';
-import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate } from './sessions.js';
+import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate, migrateStoredSessions } from './sessions.js';
 import { loadPlayerConfig, savePlayerConfig, resolveAlias, resolveDisplayName } from './playerConfig.js';
 import Dashboard from './components/Dashboard.jsx';
 import SessionsHome from './components/SessionsHome.jsx';
@@ -43,13 +43,21 @@ function resolveViewerNames(sessions, stats, playerConfig = null) {
 }
 
 export default function App() {
-  const [sessions, setSessions] = useState(() => loadSessions());
+  // Upgrade any pre-current sessions that kept their raw CSV before the first
+  // read, so they pick up newly-tracked data (stacks, corrected dates) without a
+  // manual re-upload. Runs once during initial render.
+  const [sessions, setSessions] = useState(() => {
+    migrateStoredSessions();
+    return loadSessions();
+  });
   const [view, setView] = useState(null); // null | { type:'single', id } | { type:'merged', selectedIds:[] }
   const [error, setError] = useState(null);
   const [playerConfig, setPlayerConfig] = useState(() => loadPlayerConfig());
   // Pending upload waiting for viewer-name selection. Set after a CSV is read
   // and parsed; cleared after the user picks a player (or cancels).
-  // Shape: { fileName, rows, gameDate, hash, playerNames, openOnSave: bool }
+  // Shape: { fileName, rows, text, gameDate, hash, playerNames, openOnSave: bool }
+  // `text` is the raw CSV, persisted with the session so future schema changes
+  // can re-derive data without a re-upload.
   const [pendingUpload, setPendingUpload] = useState(null);
 
   function handlePlayerConfigChange(newConfig) {
@@ -76,7 +84,7 @@ export default function App() {
           const stats = analyseLog(rows);
           const sessionName = formatSessionName(gameDate);
           const viewer = Object.keys(stats.players).find(n => n.toLowerCase().startsWith('will')) || null;
-          saveSession(sessionName, stats, gameDate, hash, viewer);
+          saveSession(sessionName, stats, gameDate, hash, viewer, text);
         }
         if (!cancelled) setSessions(loadSessions());
       } catch (err) {
@@ -108,7 +116,7 @@ export default function App() {
         const playerNames = extractPlayerNames(rows);
         const sessionName = formatSessionName(gameDate);
         setError(null);
-        setPendingUpload({ fileName: sessionName, rows, gameDate, hash, playerNames, openOnSave });
+        setPendingUpload({ fileName: sessionName, rows, text, gameDate, hash, playerNames, openOnSave });
       } catch (err) {
         console.error(err);
         setError('Failed to parse file: ' + err.message);
@@ -122,9 +130,9 @@ export default function App() {
   function handleViewerPicked(viewerName) {
     if (!pendingUpload) return;
     try {
-      const { fileName, rows, gameDate, hash, openOnSave } = pendingUpload;
+      const { fileName, rows, text, gameDate, hash, openOnSave } = pendingUpload;
       const stats = analyseLog(rows, viewerName);
-      const id = saveSession(fileName, stats, gameDate, hash, viewerName);
+      const id = saveSession(fileName, stats, gameDate, hash, viewerName, text);
       setPendingUpload(null);
       refresh();
       if (openOnSave) setView({ type: 'single', id });

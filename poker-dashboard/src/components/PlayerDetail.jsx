@@ -5,6 +5,7 @@ import CoachingReport from './CoachingReport.jsx';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
   PieChart, Pie, Cell, Tooltip, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine,
 } from 'recharts';
 
 const COLORS = ['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a29bfe','#55efc4','#fdcb6e','#e17055','#74b9ff'];
@@ -237,6 +238,42 @@ function ActionLog({ log }) {
   );
 }
 
+// A clickable "biggest pot" row that expands to show the hand's play-by-play.
+function BigPotCard({ kind, rank, h, isMerged, amountNode, extraDetails, expanded, onToggle, log }) {
+  return (
+    <div
+      className={`big-pot-card ${kind}${expanded ? ' expanded' : ''}`}
+      onClick={onToggle}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+    >
+      <div className="bp-main">
+        {rank != null && <div className="bp-rank">#{rank}</div>}
+        <div className="bp-body">
+          <div className="bp-header">
+            <span className="bp-num">Hand #{h.num}{isMerged && h.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(h.sessionDate)})</span>}</span>
+            {amountNode}
+          </div>
+          <div className="bp-details">
+            {h.c1 && h.c2 ? <><CardBadge card={h.c1} /><CardBadge card={h.c2} /></> : <span className="mucked-cards">?? ??</span>}
+            {h.board?.length > 0 && <span style={{ marginLeft: 8 }}><BoardCards board={h.board} /></span>}
+            {h.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.78rem', marginLeft: 8 }}>{h.myHandName}</span>}
+            {extraDetails}
+          </div>
+        </div>
+        <span className="bp-chevron">{expanded ? '▾' : '▸'}</span>
+      </div>
+      {expanded && (
+        <div className="bp-runout" onClick={(e) => e.stopPropagation()}>
+          <div className="bp-runout-title">Play by Play</div>
+          <ActionLog log={log} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Range grid ────────────────────────────────────────────────────────────────
 function handKey(c1, c2) {
   const toR = r => r === '10' ? 'T' : r;
@@ -385,12 +422,13 @@ const SUCKOUT_NONE = [
 ];
 
 // ── Simple View stats ─────────────────────────────────────────────────────────
-function SimpleStats({ player: p, biggestWins, biggestLosses, badBeats, suckOuts, coolers }) {
+function SimpleStats({ player: p, biggestWins, biggestSplits, biggestLosses, badBeats, suckOuts, coolers }) {
   const chipsPerHand = p.handsDealt > 0 ? (p.netChips / p.handsDealt).toFixed(1) : 0;
   const showdownWins = (p.handsHistory || []).filter(h => h.wasShown && h.won).length;
   const showdownTotal = (p.handsHistory || []).filter(h => h.wasShown).length;
   const showdownPct = showdownTotal > 0 ? Math.round(showdownWins / showdownTotal * 100) : 0;
   const topWin = biggestWins[0];
+  const topSplit = biggestSplits[0];
   const topLoss = biggestLosses[0];
   const foldPct = p.preflopFoldPct;
 
@@ -424,8 +462,16 @@ function SimpleStats({ player: p, biggestWins, biggestLosses, badBeats, suckOuts
           <span className="fun-icon">🏆</span>
           <span className="fun-label">Biggest Pot Won</span>
           <span className="fun-value" style={{ color: 'var(--win)' }}>
-            {topWin ? topWin.potSize.toLocaleString() : '—'}
+            {topWin ? (topWin.wonAmount ?? topWin.potSize).toLocaleString() : '—'}
             {topWin?.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>({topWin.myHandName})</span>}
+          </span>
+        </div>
+        <div className="fun-stat">
+          <span className="fun-icon">🤝</span>
+          <span className="fun-label">Biggest Pot Split</span>
+          <span className="fun-value" style={{ color: 'var(--gold)' }}>
+            {topSplit ? (topSplit.wonAmount ?? topSplit.potSize).toLocaleString() : '—'}
+            {topSplit && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>(of {topSplit.potSize.toLocaleString()})</span>}
           </span>
         </div>
         <div className="fun-stat">
@@ -461,6 +507,85 @@ function SimpleStats({ player: p, biggestWins, biggestLosses, badBeats, suckOuts
   );
 }
 
+// ── Chip count over time ──────────────────────────────────────────────────────
+// Builds a chronological series of the player's stack entering each hand. Between
+// sessions the player has logged out / cashed out, so the line resets to 0 before
+// the next session's buy-in — each session reads as its own segment.
+function buildChipTimeline(handsHistory) {
+  const hands = handsHistory
+    .filter(h => h.stack != null)
+    .slice()
+    .sort((a, b) =>
+      ((a.sessionDate || '').localeCompare(b.sessionDate || '')) ||
+      // Keep same-date sessions grouped (genId isn't chronological, but this
+      // stops two same-day sessions from interleaving by hand number).
+      String(a.sessionId ?? '').localeCompare(String(b.sessionId ?? '')) ||
+      (a.num - b.num));
+  if (!hands.length) return [];
+
+  const points = [];
+  let i = 0;
+  let prevSession = null;
+  let prevDate = null;
+  for (const h of hands) {
+    const sid = h.sessionId ?? '_single';
+    if (prevSession !== null && sid !== prevSession) {
+      // Logged out of the previous session → drop to 0 before the next buy-in.
+      points.push({ i: i++, stack: 0, reset: true, sessionDate: prevDate });
+    }
+    points.push({ i: i++, stack: h.stack, hand: h.num, sessionDate: h.sessionDate });
+    prevSession = sid;
+    prevDate = h.sessionDate;
+  }
+  return points;
+}
+
+const ChipTip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="custom-tooltip">
+      {d.reset
+        ? <div>Cashed out — stack reset to 0</div>
+        : <>
+            <div className="label">{d.stack.toLocaleString()} chips</div>
+            <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
+              Hand #{d.hand}{d.sessionDate ? ` · ${fmtDate(d.sessionDate)}` : ''}
+            </div>
+          </>}
+    </div>
+  );
+};
+
+function ChipTimeline({ handsHistory, isViewer = false }) {
+  const data = buildChipTimeline(handsHistory);
+  if (data.length < 2) return null;
+  const sessionCount = new Set(
+    handsHistory.filter(h => h.stack != null).map(h => h.sessionId ?? '_single')
+  ).size;
+
+  return (
+    <div className="chip-timeline">
+      <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 16 }}>
+        📈 Chip Count Over Time
+        <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.78rem', marginLeft: 8 }}>
+          — {isViewer ? 'your' : 'their'} stack entering each hand{sessionCount > 1 ? ', resets to 0 between sessions' : ''}
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={data} margin={{ top: 8, right: 12, left: -8, bottom: 6 }}>
+          <CartesianGrid stroke="#2e3350" strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="i" tick={false} axisLine={{ stroke: '#2e3350' }} height={6} />
+          <YAxis tick={{ fill: '#7c82a0', fontSize: 11 }} />
+          <Tooltip content={<ChipTip />} />
+          <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />
+          <Line type="linear" dataKey="stack" stroke="#6c63ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PlayerDetail({ player: p, isMerged = false, isViewer = false, handActionLogs = {} }) {
   const [showRadarInfo, setShowRadarInfo] = useState(false);
@@ -472,6 +597,10 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
   const [sortDir, setSortDir] = useState('desc');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchCol, setSearchCol] = useState('all');
+  // Which key-hand card (biggest pots / bad beats / suck-outs / coolers) is
+  // expanded to show its play-by-play. Keyed `${section}-${index}`.
+  const [expandedKeyHand, setExpandedKeyHand] = useState(null);
+  const toggleKeyHand = (key) => setExpandedKeyHand(prev => (prev === key ? null : key));
 
   // Look up the action log for a hand entry. New sessions store logs in the
   // top-level handActionLogs map (keyed as `${sessionId}_${num}` when a sessionId
@@ -518,10 +647,17 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
   const ominousMsg   = OMINOUS[   (p.name.charCodeAt(0) || 0) % OMINOUS.length];
   const suckOutEmpty = SUCKOUT_NONE[(p.name.charCodeAt(0) || 0) % SUCKOUT_NONE.length];
 
-  // Derived key-hands (not stored — computed at render)
+  // Derived key-hands (not stored — computed at render).
+  // Wins and splits both rank on take-home chips (`wonAmount`), not the total
+  // pot — a 600 pot scooped solo outranks a 1000 pot split for 500.
+  const takeHome = (h) => h.wonAmount ?? h.potSize;
   const biggestWins = [...handsHistory]
-    .filter(h => h.won && h.potSize > 0)
-    .sort((a, b) => b.potSize - a.potSize)
+    .filter(h => h.won && !h.isSplit && takeHome(h) > 0)
+    .sort((a, b) => takeHome(b) - takeHome(a))
+    .slice(0, 5);
+  const biggestSplits = [...handsHistory]
+    .filter(h => h.won && h.isSplit && takeHome(h) > 0)
+    .sort((a, b) => takeHome(b) - takeHome(a))
     .slice(0, 5);
   const biggestLosses = [...handsHistory]
     .filter(h => h.wasShown && !h.won && h.potSize > 0)
@@ -541,6 +677,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
     { key: 'all',       label: 'All' },
     { key: 'showdowns', label: 'Showdowns' },
     { key: 'wins',      label: 'Wins' },
+    { key: 'splits',    label: 'Splits' },
     { key: 'losses',    label: 'Losses' },
     { key: 'badbeats',  label: 'Bad Beats' },
     { key: 'suckouts',  label: 'Suck-Outs' },
@@ -550,7 +687,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
   function filterCount(key) {
     if (key === 'all')       return handsHistory.length;
     if (key === 'showdowns') return handsHistory.filter(h => h.wasShown).length;
-    if (key === 'wins')      return handsHistory.filter(h => h.won).length;
+    if (key === 'wins')      return handsHistory.filter(h => h.won && !h.isSplit).length;
+    if (key === 'splits')    return handsHistory.filter(h => h.isSplit).length;
     if (key === 'losses')    return handsHistory.filter(h => h.wasShown && !h.won).length;
     if (key === 'badbeats')  return handsHistory.filter(h => h.isBadBeat).length;
     if (key === 'suckouts')  return handsHistory.filter(h => h.isSuckOut).length;
@@ -578,7 +716,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
   const filteredHands = (() => {
     let result = handsHistory.filter(h => {
       if (handFilter === 'showdowns') return h.wasShown;
-      if (handFilter === 'wins')      return h.won;
+      if (handFilter === 'wins')      return h.won && !h.isSplit;
+      if (handFilter === 'splits')    return h.isSplit;
       if (handFilter === 'losses')    return h.wasShown && !h.won;
       if (handFilter === 'badbeats')  return h.isBadBeat;
       if (handFilter === 'suckouts')  return h.isSuckOut;
@@ -594,7 +733,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
       else if (sortCol === 'type')    cmp = categoryLabel(a.c1, a.c2).localeCompare(categoryLabel(b.c1, b.c2));
       else if (sortCol === 'session') cmp = (a.sessionDate||'').localeCompare(b.sessionDate||'');
       else if (sortCol === 'result') {
-        const rk = h => h.isCooler ? 5 : h.isBadBeat ? 4 : h.isSuckOut ? 3 : h.won ? 2 : h.wasShown ? 1 : 0;
+        const rk = h => h.isCooler ? 6 : h.isBadBeat ? 5 : h.isSuckOut ? 4 : h.isSplit ? 3 : h.won ? 2 : h.wasShown ? 1 : 0;
         cmp = rk(a) - rk(b);
       }
       else if (sortCol === 'strength') {
@@ -644,8 +783,12 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
           <div className="detail-stat"><div className="ds-label">Showdowns</div><div className="ds-value">{p.shownHands.length}</div></div>
         </div>
       ) : (
-        <SimpleStats player={p} biggestWins={biggestWins} biggestLosses={biggestLosses} badBeats={badBeats} suckOuts={suckOuts} coolers={coolers} />
+        <SimpleStats player={p} biggestWins={biggestWins} biggestSplits={biggestSplits} biggestLosses={biggestLosses} badBeats={badBeats} suckOuts={suckOuts} coolers={coolers} />
       )}
+
+      {/* Chip count over time — available for any player (stacks are recorded
+          for everyone in each `Player stacks:` snapshot). */}
+      <ChipTimeline handsHistory={handsHistory} isViewer={isViewer} />
 
       {/* Charts */}
       <div className="charts-grid" style={{ marginBottom: 0 }}>
@@ -744,7 +887,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
 
       {/* ── Coaching report (shown for every player; depth scales with how many
            hole cards we know — full for the viewer, showdowns-only for others) ── */}
-      {detailMode && <CoachingReport player={p} isMerged={isMerged} isViewer={isViewer} />}
+      {detailMode && <CoachingReport player={p} isMerged={isMerged} isViewer={isViewer} handActionLogs={handActionLogs} />}
 
       {/* ── Everything below is detailed mode only ─────────────────────────── */}
       {detailMode && <>
@@ -778,6 +921,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                             ? <span className="result-badge bad-beat">💔 Bad Beat</span>
                             : h.isSuckOut
                               ? <span className="result-badge suck-out">🎲 Suck-Out</span>
+                              : h.isSplit
+                                ? <span className="result-badge split">🤝 Split</span>
                               : h.won
                                 ? <span className="result-badge win">✓ Won</span>
                                 : h.wasShown
@@ -803,26 +948,45 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
           <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 20 }}>
             💰 Biggest Pots Won
             <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.78rem', marginLeft: 8 }}>
-              — top {biggestWins.length} by pot size
+              — top {biggestWins.length} by chips won
             </span>
           </div>
           <div className="big-pot-list">
-            {biggestWins.map((h, i) => (
-              <div key={i} className="big-pot-card win">
-                <div className="bp-rank">#{i + 1}</div>
-                <div className="bp-body">
-                  <div className="bp-header">
-                    <span className="bp-num">Hand #{h.num}{isMerged && h.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(h.sessionDate)})</span>}</span>
-                    <span className="bp-amount pos">Won {(h.wonAmount ?? h.potSize).toLocaleString()}</span>
-                  </div>
-                  <div className="bp-details">
-                    {h.c1 && h.c2 ? <><CardBadge card={h.c1} /><CardBadge card={h.c2} /></> : <span className="mucked-cards">?? ??</span>}
-                    {h.board?.length > 0 && <span style={{ marginLeft: 8 }}><BoardCards board={h.board} /></span>}
-                    {h.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.78rem', marginLeft: 8 }}>{h.myHandName}</span>}
-                  </div>
-                </div>
-              </div>
-            ))}
+            {biggestWins.map((h, i) => {
+              const key = `win-${i}`;
+              return (
+                <BigPotCard
+                  key={key} kind="win" rank={i + 1} h={h} isMerged={isMerged}
+                  amountNode={<span className="bp-amount pos">Won {(h.wonAmount ?? h.potSize).toLocaleString()}</span>}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                />
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* ── Biggest Pots Split ───────────────────────────────────────────────── */}
+      {biggestSplits.length > 0 && (
+        <>
+          <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 16 }}>
+            🤝 Biggest Pots Split
+            <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.78rem', marginLeft: 8 }}>
+              — top {biggestSplits.length} by chips taken home
+            </span>
+          </div>
+          <div className="big-pot-list">
+            {biggestSplits.map((h, i) => {
+              const key = `split-${i}`;
+              return (
+                <BigPotCard
+                  key={key} kind="split" rank={i + 1} h={h} isMerged={isMerged}
+                  amountNode={<span className="bp-amount split">Took {(h.wonAmount ?? h.potSize).toLocaleString()} <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.74rem' }}>of {h.potSize.toLocaleString()}</span></span>}
+                  extraDetails={h.splitWith?.length > 0 && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 8 }}>split with {h.splitWith.join(', ')}</span>}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                />
+              );
+            })}
           </div>
         </>
       )}
@@ -837,23 +1001,17 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
             </span>
           </div>
           <div className="big-pot-list">
-            {biggestLosses.map((h, i) => (
-              <div key={i} className="big-pot-card loss">
-                <div className="bp-rank">#{i + 1}</div>
-                <div className="bp-body">
-                  <div className="bp-header">
-                    <span className="bp-num">Hand #{h.num}{isMerged && h.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(h.sessionDate)})</span>}</span>
-                    <span className="bp-amount neg">Lost {h.potSize.toLocaleString()}</span>
-                  </div>
-                  <div className="bp-details">
-                    {h.c1 && h.c2 ? <><CardBadge card={h.c1} /><CardBadge card={h.c2} /></> : <span className="mucked-cards">?? ??</span>}
-                    {h.board?.length > 0 && <span style={{ marginLeft: 8 }}><BoardCards board={h.board} /></span>}
-                    {h.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.78rem', marginLeft: 8 }}>{h.myHandName}</span>}
-                    {h.winnerHandName && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>vs {h.winnerHandName}</span>}
-                  </div>
-                </div>
-              </div>
-            ))}
+            {biggestLosses.map((h, i) => {
+              const key = `loss-${i}`;
+              return (
+                <BigPotCard
+                  key={key} kind="loss" rank={i + 1} h={h} isMerged={isMerged}
+                  amountNode={<span className="bp-amount neg">Lost {h.potSize.toLocaleString()}</span>}
+                  extraDetails={h.winnerHandName && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>vs {h.winnerHandName}</span>}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                />
+              );
+            })}
           </div>
         </>
       )}
@@ -875,23 +1033,16 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
             ))}
           </div>
           <div className="big-pot-list">
-            {premiumShowdowns.map((h, i) => (
-              <div key={i} className={`big-pot-card ${h.won ? 'win' : 'loss'}`}>
-                <div className="bp-body">
-                  <div className="bp-header">
-                    <span className="bp-num">Hand #{h.num}{isMerged && h.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(h.sessionDate)})</span>}</span>
-                    <span className={`bp-amount ${h.won ? 'pos' : 'neg'}`}>
-                      {h.won ? `Won ${(h.wonAmount ?? h.potSize).toLocaleString()}` : `Lost ${h.potSize.toLocaleString()}`}
-                    </span>
-                  </div>
-                  <div className="bp-details">
-                    <CardBadge card={h.c1} /><CardBadge card={h.c2} />
-                    {h.board?.length > 0 && <span style={{ marginLeft: 8 }}><BoardCards board={h.board} /></span>}
-                    {h.myHandName && <span style={{ color: 'var(--muted)', fontSize: '0.78rem', marginLeft: 8 }}>{h.myHandName}</span>}
-                  </div>
-                </div>
-              </div>
-            ))}
+            {premiumShowdowns.map((h, i) => {
+              const key = `premium-${i}`;
+              return (
+                <BigPotCard
+                  key={key} kind={h.won ? 'win' : 'loss'} rank={null} h={h} isMerged={isMerged}
+                  amountNode={<span className={`bp-amount ${h.won ? 'pos' : 'neg'}`}>{h.won ? `Won ${(h.wonAmount ?? h.potSize).toLocaleString()}` : `Lost ${h.potSize.toLocaleString()}`}</span>}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                />
+              );
+            })}
           </div>
         </>
       )}
@@ -910,12 +1061,22 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
         <div className="bad-beat-empty suck-out-empty">{suckOutEmpty}</div>
       ) : (
         <div className="bad-beat-list">
-          {suckOuts.map((so, i) => (
-            <div key={i} className="bad-beat-card suck-out-card">
+          {suckOuts.map((so, i) => {
+            const key = `suckout-${i}`;
+            const expanded = expandedKeyHand === key;
+            return (
+            <div
+              key={key}
+              className={`bad-beat-card suck-out-card${expanded ? ' expanded' : ''}`}
+              onClick={() => toggleKeyHand(key)}
+              role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleKeyHand(key); } }}
+            >
               <div className="bb-header">
                 <span className="bb-num">Hand #{so.num}{isMerged && so.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(so.sessionDate)})</span>}</span>
                 <span className="bb-severity">{SO_SEVERITY[so.oppHandRank] || ''}</span>
                 <span className="bb-pot pos">Won {(so.wonAmount ?? so.potSize).toLocaleString()}</span>
+                <span className="bp-chevron">{expanded ? '▾' : '▸'}</span>
               </div>
               <div className="bb-body">
                 <div className="bb-side">
@@ -936,14 +1097,15 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                   <BoardCards board={so.board} />
                 </div>
               )}
-              {detailMode && (
-                <div style={{marginTop:10}}>
+              {expanded && (
+                <div style={{marginTop:10}} onClick={(e) => e.stopPropagation()}>
                   <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
                   <ActionLog log={getActionLog(so)}/>
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -961,12 +1123,22 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
         <div className="bad-beat-empty">{ominousMsg}</div>
       ) : (
         <div className="bad-beat-list">
-          {badBeats.map((bb, i) => (
-            <div key={i} className="bad-beat-card">
+          {badBeats.map((bb, i) => {
+            const key = `badbeat-${i}`;
+            const expanded = expandedKeyHand === key;
+            return (
+            <div
+              key={key}
+              className={`bad-beat-card${expanded ? ' expanded' : ''}`}
+              onClick={() => toggleKeyHand(key)}
+              role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleKeyHand(key); } }}
+            >
               <div className="bb-header">
                 <span className="bb-num">Hand #{bb.num}{isMerged && bb.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(bb.sessionDate)})</span>}</span>
                 <span className="bb-severity">{BB_SEVERITY[bb.myHandRank] || ''}</span>
                 <span className="bb-pot neg">Lost {bb.potSize.toLocaleString()}</span>
+                <span className="bp-chevron">{expanded ? '▾' : '▸'}</span>
               </div>
               <div className="bb-body">
                 <div className="bb-side">
@@ -987,14 +1159,15 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                   <BoardCards board={bb.board} />
                 </div>
               )}
-              {detailMode && (
-                <div style={{marginTop:10}}>
+              {expanded && (
+                <div style={{marginTop:10}} onClick={(e) => e.stopPropagation()}>
                   <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
                   <ActionLog log={getActionLog(bb)}/>
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1012,14 +1185,24 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
         <div className="bad-beat-empty" style={{ borderColor: 'rgba(108,99,255,0.15)' }}>No coolers detected. No unavoidable collisions yet.</div>
       ) : (
         <div className="bad-beat-list">
-          {coolers.map((c, i) => (
-            <div key={i} className="bad-beat-card cooler-card">
+          {coolers.map((c, i) => {
+            const key = `cooler-${i}`;
+            const expanded = expandedKeyHand === key;
+            return (
+            <div
+              key={key}
+              className={`bad-beat-card cooler-card${expanded ? ' expanded' : ''}`}
+              onClick={() => toggleKeyHand(key)}
+              role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleKeyHand(key); } }}
+            >
               <div className="bb-header">
                 <span className="bb-num">Hand #{c.num}{isMerged && c.sessionDate && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 6 }}>({fmtDate(c.sessionDate)})</span>}</span>
                 <span className="bb-severity">{CL_SEVERITY[Math.min(c.myHandRank, c.oppHandRank)] || ''}</span>
                 <span className={`bb-pot ${c.won ? 'pos' : 'neg'}`}>
                   {c.won ? `Won ${c.potSize.toLocaleString()}` : `Lost ${c.potSize.toLocaleString()}`}
                 </span>
+                <span className="bp-chevron">{expanded ? '▾' : '▸'}</span>
               </div>
               <div className="bb-body">
                 <div className="bb-side">
@@ -1042,14 +1225,15 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                   <BoardCards board={c.board} />
                 </div>
               )}
-              {detailMode && (
-                <div style={{marginTop:10}}>
+              {expanded && (
+                <div style={{marginTop:10}} onClick={(e) => e.stopPropagation()}>
                   <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
                   <ActionLog log={getActionLog(c)}/>
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1132,6 +1316,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                           ? <span className="result-badge bad-beat">💔 Bad Beat</span>
                           : h.isSuckOut
                             ? <span className="result-badge suck-out">🎲 Suck-Out</span>
+                            : h.isSplit
+                              ? <span className="result-badge split">🤝 Split</span>
                             : h.won
                               ? <span className="result-badge win">✓ Won</span>
                               : h.wasShown
@@ -1177,8 +1363,10 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                           )}
                           <div className="hd-row">
                             <span className="hd-label">Result</span>
-                            <span className={h.won ? 'pos' : 'neg'}>
-                              {h.won
+                            <span className={h.isSplit ? 'split-text' : h.won ? 'pos' : 'neg'}>
+                              {h.isSplit
+                                ? <>Split pot{h.wonAmount != null ? <strong> +{h.wonAmount.toLocaleString()}</strong> : ''} chips{h.splitWith?.length > 0 && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>with {h.splitWith.join(', ')}</span>}{h.myHandName && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>({h.myHandName})</span>}</>
+                                : h.won
                                 ? <>Won{h.wonAmount != null ? <strong> +{h.wonAmount.toLocaleString()}</strong> : ''} chips{h.myHandName && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>with {h.myHandName}</span>}</>
                                 : h.wasShown
                                   ? <>Lost at showdown{h.winnerHandName && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>to {h.winnerHandName}</span>}{h.myHandName && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>(your hand: {h.myHandName})</span>}</>

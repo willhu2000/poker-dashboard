@@ -73,6 +73,7 @@ export function analyseLog(rows, viewerName = null) {
         allHandsShown: 0,
         // wins
         handsWon: 0,
+        handsSplit: 0,   // pots shared with ≥1 other winner
         potsWon: 0,
         // preflop range tracking (all observed hole cards)
         rangeHands: [],
@@ -97,6 +98,15 @@ export function analyseLog(rows, viewerName = null) {
     const dealtNames = Object.keys(hand.players);
     const potSize = hand.winners.reduce((s, w) => s + w.amount, 0);
     const winnerSet = new Set(hand.winners.map(w => w.name));
+    // A split pot has two or more *distinct* winners sharing the same showdown.
+    // (Multiple `collected` lines for a single player are side pots, not a split.)
+    const distinctWinners = [...winnerSet];
+    const isSplitPot = distinctWinners.length >= 2;
+    // The actual chips a player took home — sums every pot (main + side) they
+    // collected. This is what the "biggest pot" stats rank on, not the total pot.
+    const takeHome = (name) => hand.winners
+      .filter(w => w.name === name)
+      .reduce((s, w) => s + w.amount, 0);
     const viewerName = findViewerName(hand);
 
     // ── VPIP / PFR / fold tracking ────────────────────────────────────────────
@@ -136,8 +146,12 @@ export function analyseLog(rows, viewerName = null) {
     }
 
     // ── Winners ───────────────────────────────────────────────────────────────
-    for (const w of hand.winners) {
-      getPlayer(w.name).handsWon++;
+    // Iterate distinct names so a player who scoops a main + side pot only
+    // counts as a single win.
+    for (const name of distinctWinners) {
+      const wp = getPlayer(name);
+      wp.handsWon++;
+      if (isSplitPot) wp.handsSplit++;
     }
 
     // ── Viewer cards (Will's hand — shown every hand) ─────────────────────────
@@ -248,7 +262,9 @@ export function analyseLog(rows, viewerName = null) {
 
       const won = winnerSet.has(name);
       const wasShown = !!(shownCards && shownCards[0] && shownCards[1]);
-      const wonAmount = won ? (hand.winners.find(w => w.name === name)?.amount ?? null) : null;
+      const wonAmount = won ? takeHome(name) : null;
+      const isSplit = won && isSplitPot;
+      const splitWith = isSplit ? distinctWinners.filter(n => n !== name) : [];
       const isBadBeat = p.badBeats.some(bb => bb.num === hand.number);
       const isSuckOut = p.suckOuts.some(so => so.num === hand.number);
       const isCooler = p.coolers.some(c => c.num === hand.number);
@@ -278,9 +294,14 @@ export function analyseLog(rows, viewerName = null) {
         num: hand.number,
         c1, c2,
         won,
+        isSplit,
+        splitWith,
         wasShown,
         wonAmount,
         potSize,
+        // Stack entering this hand (from the `Player stacks:` snapshot), used to
+        // plot chip count over time. Null if the player wasn't in that snapshot.
+        stack: hand.players[name]?.stack ?? null,
         board: hand.board.slice(),
         opponents,
         isBadBeat,

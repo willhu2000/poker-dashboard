@@ -316,8 +316,8 @@ function verdictFor(ctx) {
   return postflopVerdict(ctx);
 }
 
-function analyzeHandActions(hand, playerName) {
-  if (!hand.actionLog) return [];
+function analyzeHandActions(hand, playerName, log = hand.actionLog) {
+  if (!log) return [];
   const holeCards = (hand.c1 && hand.c2) ? [hand.c1, hand.c2] : null;
 
   const steps = [];
@@ -328,7 +328,7 @@ function analyzeHandActions(hand, playerName) {
   let contrib = {};        // player → chips committed this street
   let raisesThisStreet = 0;
 
-  for (const e of hand.actionLog) {
+  for (const e of log) {
     if (e.type === 'street') {
       street = e.street;
       streetBoard = e.board || [];
@@ -387,7 +387,7 @@ function analyzeHandActions(hand, playerName) {
 // Score each hand by impact and tag it with a coaching annotation. Only hands
 // where we know the player's hole cards (c1/c2 set) are eligible — for the
 // viewer that's every hand, for others it's showdowns only.
-function rankKeyHands(p) {
+function rankKeyHands(p, getLog) {
   const hh = p.handsHistory || [];
   const scored = [];
 
@@ -396,7 +396,7 @@ function rankKeyHands(p) {
     if (!h.potSize) continue;
 
     const cat = categoryFromCards(h.c1, h.c2);
-    const myActions = (h.actionLog || []).filter(a => a.player === p.name);
+    const myActions = (getLog(h) || []).filter(a => a.player === p.name);
     const enteredVoluntarily = myActions.some(a => a.street === 'preflop' && ['call', 'raise', 'bet'].includes(a.action));
     const folded = !h.wasShown && !h.won;
 
@@ -409,6 +409,8 @@ function rankKeyHands(p) {
     } else if (h.isSuckOut) {
       score *= 1.05;
       tags.push({ kind: 'variance', text: 'Suck-out — you got there on a late street. Good result, but don\'t plan on it happening twice.' });
+    } else if (h.isSplit) {
+      tags.push({ kind: 'good', text: `Split the pot${h.wonAmount ? ` (+${h.wonAmount.toLocaleString()} chips)` : ''}${h.myHandName ? ` with ${h.myHandName}` : ''}.` });
     } else if (h.won) {
       tags.push({ kind: 'good', text: `Won the pot${h.wonAmount ? ` (+${h.wonAmount.toLocaleString()} chips)` : ''}${h.myHandName ? ` with ${h.myHandName}` : ''}.` });
     } else if (h.wasShown) {
@@ -477,9 +479,9 @@ function StepRow({ step }) {
   );
 }
 
-function KeyHandCard({ scored, isMerged, playerName, expanded, onToggle }) {
+function KeyHandCard({ scored, isMerged, playerName, expanded, onToggle, getLog }) {
   const { h, tags } = scored;
-  const steps = expanded ? analyzeHandActions(h, playerName) : [];
+  const steps = expanded ? analyzeHandActions(h, playerName, getLog(h)) : [];
 
   return (
     <div className="cr-hand-card">
@@ -531,14 +533,20 @@ function KeyHandCard({ scored, isMerged, playerName, expanded, onToggle }) {
   );
 }
 
-export default function CoachingReport({ player, isMerged = false, isViewer = false }) {
+export default function CoachingReport({ player, isMerged = false, isViewer = false, handActionLogs = {} }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedKeyHands, setExpandedKeyHands] = useState(false);
   const [expandedHandIdx, setExpandedHandIdx] = useState(null);
 
+  // Action logs are stored in a top-level map keyed by `${sessionId}_${num}`
+  // (older single-session data may key by plain hand number, and the oldest
+  // inline-stored logs are read from the hand itself). Mirror PlayerDetail's
+  // lookup so the per-hand breakdowns resolve.
+  const getLog = (h) => handActionLogs[h.sessionId ? `${h.sessionId}_${h.num}` : h.num] ?? h.actionLog ?? [];
+
   const archetype = styleArchetype(player);
   const findings = buildFindings(player);
-  const keyHands = rankKeyHands(player);
+  const keyHands = rankKeyHands(player, getLog);
   const wins = findings.filter(f => f.kind === 'good');
   const leaks = findings.filter(f => f.kind === 'leak');
   const variance = findings.filter(f => f.kind === 'variance');
@@ -660,6 +668,7 @@ export default function CoachingReport({ player, isMerged = false, isViewer = fa
               scored={s}
               isMerged={isMerged}
               playerName={player.name}
+              getLog={getLog}
               expanded={expandedHandIdx === i}
               onToggle={() => setExpandedHandIdx(expandedHandIdx === i ? null : i)}
             />

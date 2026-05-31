@@ -24,20 +24,27 @@ function initialsOf(name) {
 // Custom CSS quadrant chart (replaces Recharts ScatterChart, which crashes under
 // React 19 + Recharts 3 because Scatter passes a string to a path's `style` prop).
 function StyleQuadrants({ players }) {
-  // Zoom the axes to the range where home-game players actually cluster.
-  // VPIP: 0–100, AF: 0–5 (capped). The lower AF cap gives more vertical
-  // room in the passive region where casual players tend to sit.
-  const VPIP_MAX = 100, AF_MAX = 5;
-  // Crosshairs: VPIP=30 (more realistic for home games) and AF=1.5
+  // VPIP is naturally 0–100. The AF axis auto-scales to fit the most aggressive
+  // player (floor of 5, capped at 8 so a lone outlier doesn't crush the cluster)
+  // so nobody gets pinned to the top edge. Crosshairs: VPIP=30, AF=1.5.
+  const VPIP_MAX = 100;
+  const maxAf = players.length ? Math.max(...players.map(p => p.af)) : 0;
+  const AF_MAX = Math.max(5, Math.min(8, Math.ceil(maxAf)));
   const VPIP_LINE = 30, AF_LINE = 1.5;
-  const dots = players.map(p => {
-    const af = Math.min(p.af, AF_MAX);
-    const x = (p.vpip / VPIP_MAX) * 100;
-    const y = 100 - (af / AF_MAX) * 100;
-    return { ...p, x, y, color: colorFor(p.name) };
-  });
-  const vLinePct = (VPIP_LINE / VPIP_MAX) * 100;
-  const hLinePct = 100 - (AF_LINE / AF_MAX) * 100;
+
+  // Map data into an inset region (rather than the full 0–100%) so dots and
+  // their name labels never get clipped by the chart's `overflow: hidden`.
+  const PAD_X = 7, PAD_Y = 10; // percent
+  const xPos = (vpip) => PAD_X + (Math.max(0, Math.min(vpip, VPIP_MAX)) / VPIP_MAX) * (100 - 2 * PAD_X);
+  const yPos = (af) => PAD_Y + (1 - Math.max(0, Math.min(af, AF_MAX)) / AF_MAX) * (100 - 2 * PAD_Y);
+
+  const dots = players.map(p => ({ ...p, x: xPos(p.vpip), y: yPos(p.af), color: colorFor(p.name) }));
+
+  // AF tick marks every 1 (or every 2 once the axis stretches past 6).
+  const afStep = AF_MAX > 6 ? 2 : 1;
+  const afTicks = [];
+  for (let v = 0; v <= AF_MAX; v += afStep) afTicks.push(v);
+
   return (
     <div className="quadrant-wrap">
       <div className="quadrant-chart">
@@ -47,17 +54,17 @@ function StyleQuadrants({ players }) {
         <div className="quad-label bl">Tight-Passive (Rock)</div>
         <div className="quad-label br">Loose-Passive (Calling Station)</div>
         {/* Crosshair lines */}
-        <div className="quad-line v" style={{ left: `${vLinePct}%` }} />
-        <div className="quad-line h" style={{ top: `${hLinePct}%` }} />
+        <div className="quad-line v" style={{ left: `${xPos(VPIP_LINE)}%` }} />
+        <div className="quad-line h" style={{ top: `${yPos(AF_LINE)}%` }} />
         {/* Axis tick marks */}
         <div className="quad-tick-row">
           {[0, 25, 50, 75, 100].map(v => (
-            <span key={v} className="quad-tick" style={{ left: `${v}%` }}>{v}</span>
+            <span key={v} className="quad-tick" style={{ left: `${xPos(v)}%` }}>{v}</span>
           ))}
         </div>
         <div className="quad-tick-col">
-          {[0, 1, 2, 3, 4, 5].map(v => (
-            <span key={v} className="quad-tick" style={{ top: `${100 - (v / AF_MAX) * 100}%` }}>{v}</span>
+          {afTicks.map(v => (
+            <span key={v} className="quad-tick" style={{ top: `${yPos(v)}%` }}>{v}</span>
           ))}
         </div>
         {/* Dots */}

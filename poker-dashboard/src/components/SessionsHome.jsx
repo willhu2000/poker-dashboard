@@ -4,7 +4,13 @@ import { resolveAlias } from '../playerConfig.js';
 import PlayerManagement from './PlayerManagement.jsx';
 
 function fmt(iso) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  if (!iso) return '—';
+  // Parse a stored YYYY-MM-DD as a LOCAL date. `new Date('2026-05-13')` would be
+  // parsed as UTC midnight and render as the previous day in negative-offset
+  // timezones — build it from local fields instead.
+  const [y, m, d] = String(iso).split('T')[0].split('-').map(Number);
+  if (!y || !m || !d) return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function SummaryCard({ icon, label, value, sub, color }) {
@@ -22,6 +28,7 @@ function computeSummary(sessions, config) {
   let totalHands = 0;
   let viewerNet = 0;
   let biggestPotWon = null;
+  let biggestPotSplit = null;
   let worstBadBeat = null;
   let hasViewer = false;
   const viewer = config?.viewer;
@@ -41,10 +48,15 @@ function computeSummary(sessions, config) {
       viewerNet += vp.netChips ?? 0;
 
       for (const h of (vp.handsHistory || [])) {
-        if (h.won && h.potSize > 0) {
-          if (!biggestPotWon || h.potSize > biggestPotWon.amount) {
-            biggestPotWon = { amount: h.potSize, sessionName: s.fileName };
+        if (!h.won) continue;
+        const takeHome = h.wonAmount ?? h.potSize;
+        if (takeHome <= 0) continue;
+        if (h.isSplit) {
+          if (!biggestPotSplit || takeHome > biggestPotSplit.amount) {
+            biggestPotSplit = { amount: takeHome, potSize: h.potSize, sessionName: s.fileName };
           }
+        } else if (!biggestPotWon || takeHome > biggestPotWon.amount) {
+          biggestPotWon = { amount: takeHome, sessionName: s.fileName };
         }
       }
 
@@ -57,7 +69,7 @@ function computeSummary(sessions, config) {
     }
   }
 
-  return { totalHands, viewerNet, hasViewer, biggestPotWon, worstBadBeat };
+  return { totalHands, viewerNet, hasViewer, biggestPotWon, biggestPotSplit, worstBadBeat };
 }
 
 export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange, viewerName }) {
@@ -123,8 +135,8 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
         {hasOutdatedSessions() && (
           <div className="outdated-banner">
             <div>
-              <strong>Some sessions have outdated stats.</strong>{' '}
-              Net Chips were computed before the still-seated fix. Re-upload those CSVs (or reset and let the bundled samples re-load) to get correct numbers.
+              <strong>Some older sessions are missing newer data</strong> (e.g. the chip-count graph, corrected dates).{' '}
+              They were saved before the app kept a copy of the original log, so they can't upgrade on their own. Re-upload those CSVs once to fill in the data and future-proof them (or reset to reload the bundled samples). Everything else still works as-is.
             </div>
             <button
               className="btn btn-ghost"
@@ -183,6 +195,13 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
                   label="Biggest Pot Won"
                   value={summary.biggestPotWon ? summary.biggestPotWon.amount.toLocaleString() : '—'}
                   sub={summary.biggestPotWon?.sessionName}
+                />
+                <SummaryCard
+                  icon="🤝"
+                  label="Biggest Pot Split"
+                  value={summary.biggestPotSplit ? summary.biggestPotSplit.amount.toLocaleString() : '—'}
+                  color="var(--gold)"
+                  sub={summary.biggestPotSplit ? `of ${summary.biggestPotSplit.potSize.toLocaleString()}` : null}
                 />
                 <SummaryCard
                   icon="💔"

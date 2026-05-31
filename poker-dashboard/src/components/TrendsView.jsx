@@ -43,10 +43,19 @@ function arrow(delta, dir) {
 
 const Tip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
+  // Order players highest → lowest at this point (null/missing values sink to
+  // the bottom) so the tooltip ranks them by their value at the hovered point.
+  const rows = [...payload].sort((a, b) => {
+    const av = a.value, bv = b.value;
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return bv - av;
+  });
   return (
     <div className="custom-tooltip">
       <div className="label">{label}</div>
-      {payload.map(p => (
+      {rows.map(p => (
         <div key={p.dataKey} style={{ color: p.color }}>
           {p.dataKey}: {p.value == null ? '—' : (typeof p.value === 'number' ? p.value.toFixed(p.value % 1 === 0 ? 0 : 1) : p.value)}
         </div>

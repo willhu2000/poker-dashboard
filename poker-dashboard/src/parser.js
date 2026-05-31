@@ -122,6 +122,17 @@ export function formatSessionName(date = new Date()) {
   return `poker-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${d.getFullYear()}`;
 }
 
+// Format a Date as YYYY-MM-DD using **local** calendar fields. PokerNow `at`
+// timestamps are UTC, so an evening game in a negative-offset timezone falls on
+// the next UTC day — using toISOString() here would store the date a day ahead
+// of the real (local) game date. Always derive the stored date this way so it
+// matches formatSessionName and what the player actually saw.
+export function toLocalDateStr(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const d = new Date(date);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // Scan parsed log rows for every player name that appears in the file.
 // Pulls names from any quoted "name @ tag" token, which covers joins, stacks,
 // dealer/blind announcements, actions, shows, and collects.
