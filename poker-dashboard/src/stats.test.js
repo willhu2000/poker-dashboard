@@ -2,6 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { analyseLog } from './stats.js';
 import { SPLIT_AND_SOLO } from './testFixtures.js';
 
+describe('analyseLog — show actions carry the shown cards', () => {
+  it('records the cards on the show action-log entry', () => {
+    const { handActionLogs } = analyseLog(SPLIT_AND_SOLO);
+    const shows = handActionLogs[1].filter(a => a.action === 'show');
+    expect(shows.length).toBe(2); // Alice and Bob both showed
+    expect(shows[0].cards).toEqual([{ rank: 'A', suit: 'c' }, { rank: 'A', suit: 'd' }]);
+  });
+});
+
 describe('analyseLog — split vs solo pots', () => {
   const { players, handCount } = analyseLog(SPLIT_AND_SOLO);
   const alice = players['Alice'];

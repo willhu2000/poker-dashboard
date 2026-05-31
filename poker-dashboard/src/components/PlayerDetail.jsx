@@ -225,12 +225,17 @@ function ActionLog({ log }) {
             {g.street.toUpperCase()}
             {g.board?.length>0&&<span className="al-board">{g.board.map((c,i)=><CardBadge key={i} card={c}/>)}</span>}
           </div>
-          {g.actions.map((act,ai)=>(
-            <div key={ai} className="al-action">
-              <span className="al-player">{act.player}</span>
-              <span className="al-verb">{ACT_TEXT[act.action]?.(act)??act.action}</span>
-            </div>
-          ))}
+          {g.actions.map((act,ai)=>{
+            const showCards = act.action==='show' && (act.cards||[]).filter(c=>c&&c.rank);
+            return (
+              <div key={ai} className="al-action">
+                <span className="al-player">{act.player}</span>
+                {showCards && showCards.length
+                  ? <span className="al-verb">shows {showCards.map((c,i)=><CardBadge key={i} card={c}/>)}</span>
+                  : <span className="al-verb">{ACT_TEXT[act.action]?.(act)??act.action}</span>}
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>

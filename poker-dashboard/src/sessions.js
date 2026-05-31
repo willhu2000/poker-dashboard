@@ -11,13 +11,15 @@ const KEY = 'poker-sessions'; // legacy localStorage key (data is migrated into 
 //   v2: tracks lastSeenStack / lastBuyInOrder / lastQuitOrder and effectiveCashOut
 //   v3: per-hand `stack` (chip-count graph) + local game date; sessions now keep
 //       the raw CSV (`rawLog`) so future bumps re-derive everything automatically.
+//   v4: `show` action-log entries carry the shown cards (play-by-play renders the
+//       actual hand instead of a generic "shows hand").
 //
 // Sessions that carry a `rawLog` self-heal on load (initSessions re-runs the
 // parser/analyser via migrateRecords), so they NEVER need a manual re-upload
 // again. Only legacy sessions saved without a rawLog can't auto-upgrade — those
 // are what hasOutdatedSessions() flags. (Split fields are still back-filled from
 // stored action logs for them too; see backfillSplitFields.)
-export const STATS_SCHEMA_VERSION = 3;
+export const STATS_SCHEMA_VERSION = 4;
 
 // ── In-memory session cache ───────────────────────────────────────────────────
 // IndexedDB is async, but the rest of the app expects synchronous reads. We keep

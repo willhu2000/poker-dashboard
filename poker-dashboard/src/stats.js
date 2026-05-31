@@ -505,13 +505,16 @@ export function analyseLog(rows, viewerName = null) {
     if (showMatch) {
       const name = extractName(showMatch[1]);
       const parts = showMatch[2].split(',').map(s => s.trim());
+      const cards = parts.map(normaliseCard).filter(c => c && c.rank);
       if (parts.length === 2) {
         currentHand.shownCards[name] = parts.map(normaliseCard);
       } else if (parts.length === 1) {
         if (!currentHand.shownCards[name]) currentHand.shownCards[name] = [];
         currentHand.shownCards[name].push(normaliseCard(parts[0]));
       }
-      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'show' });
+      // Carry the shown cards on the action-log entry so the play-by-play can
+      // render the actual hand ("shows A♠ K♥") instead of a generic "shows hand".
+      currentHand.actionLog.push({ type: 'action', street: currentHand.street, player: name, action: 'show', cards });
       continue;
     }
 
