@@ -5,11 +5,16 @@ import { bestHand } from './handEval.js';
 // Hand-level state machine
 // ──────────────────────────────────────────────────────────────────────────────
 
+// Empty per-position counter: hands / vpip / pfr / wins.
+function zPos() { return { h: 0, v: 0, p: 0, w: 0 }; }
+
 function emptyHand() {
   return {
     id: null,
     number: null,
     players: {},          // { displayName: { seat, stack } }
+    seats: {},            // { displayName: seatNumber } from the Player stacks line
+    bbSize: null,         // big-blind size posted this hand
     preflopActions: {},   // { displayName: ['fold'|'call'|'raise'|'check'|'bet'] }
     street: 'preflop',
     shownCards: {},       // { displayName: [card1, card2] }
@@ -22,6 +27,65 @@ function emptyHand() {
     bb: null,             // player name who is big blind
     actionLog: [],        // [{type:'action'|'street', street, player?, action?, amount?}, ...]
   };
+}
+
+// Assign a position label to each dealt player from seat order + the dealer.
+// Returns { name: 'BTN'|'SB'|'BB'|'LP'|'MP'|'EP' } or {} if the dealer is unknown.
+function positionsFor(hand) {
+  const dealtNames = Object.keys(hand.players);
+  if (!hand.dealer || !(hand.dealer in hand.seats)) return {};
+  // Order players clockwise by physical seat number.
+  const ordered = dealtNames
+    .filter(n => hand.seats[n] != null)
+    .sort((a, b) => hand.seats[a] - hand.seats[b]);
+  const n = ordered.length;
+  if (n < 2) return {};
+  const dealerIdx = ordered.indexOf(hand.dealer);
+  if (dealerIdx < 0) return {};
+  const out = {};
+  for (let i = 0; i < n; i++) {
+    const offset = (i - dealerIdx + n) % n; // 0 = button, 1 = SB, 2 = BB, …
+    let label;
+    if (offset === 0) label = 'BTN';
+    else if (offset === 1) label = n === 2 ? 'BTN' : 'SB'; // heads-up: button is SB
+    else if (offset === 2) label = 'BB';
+    else if (offset === n - 1) label = 'LP';               // cutoff
+    else label = (offset - 3) < (n - 3) / 2 ? 'EP' : 'MP'; // split the middle
+    out[ordered[i]] = label;
+  }
+  return out;
+}
+
+// Walk a hand's action log to credit 3-bet (a preflop re-raise facing one open)
+// and continuation-bet (the preflop aggressor making the first flop bet)
+// opportunities + actions. Approximations suitable for a home-game tool.
+function accumulatePreflopAggression(hand, getPlayer) {
+  let preflopRaises = 0;        // raises/bets seen so far preflop
+  let lastPreflopRaiser = null; // the preflop aggressor
+  let firstFlopBettor = null;
+  let flopDealt = false;
+
+  for (const ev of hand.actionLog) {
+    if (ev.type === 'street') { if (ev.street === 'flop') flopDealt = true; continue; }
+    if (ev.type !== 'action') continue;
+    if (ev.street === 'preflop') {
+      if (ev.action === 'raise' || ev.action === 'bet') {
+        if (preflopRaises === 1) { const p = getPlayer(ev.player); p.threeBetOpp++; p.threeBets++; }
+        preflopRaises++;
+        lastPreflopRaiser = ev.player;
+      } else if (ev.action === 'call' || ev.action === 'fold') {
+        if (preflopRaises === 1) getPlayer(ev.player).threeBetOpp++;
+      }
+    } else if (ev.street === 'flop' && firstFlopBettor === null && ev.action === 'bet') {
+      firstFlopBettor = ev.player;
+    }
+  }
+
+  if (lastPreflopRaiser && (flopDealt || hand.board.length >= 3)) {
+    const agg = getPlayer(lastPreflopRaiser);
+    agg.cbetOpp++;
+    if (firstFlopBettor === lastPreflopRaiser) agg.cbets++;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -75,6 +139,20 @@ export function analyseLog(rows, viewerName = null) {
         handsWon: 0,
         handsSplit: 0,   // pots shared with ≥1 other winner
         potsWon: 0,
+        // ── Advanced analytics accumulators ──────────────────────────────────
+        // Per-position counts: { h: hands, v: vpipHands, p: pfrHands, w: wins }.
+        posStats: { BTN: zPos(), SB: zPos(), BB: zPos(), LP: zPos(), MP: zPos(), EP: zPos() },
+        // Showdown funnel (denominators for WTSD / W$SD).
+        sawFlopHands: 0,   // didn't fold preflop and a flop was dealt
+        wtsdHands: 0,      // of those, reached showdown
+        wsdHands: 0,       // of those, won
+        // Preflop 3-bet and flop continuation-bet opportunities/actions.
+        threeBetOpp: 0, threeBets: 0,
+        cbetOpp: 0, cbets: 0,
+        // Big-blind sizes seen (size → hands), for a representative bb/100.
+        bbCounts: {},
+        // Head-to-head showdown record vs each opponent: { name: { w, l } }.
+        vsOpponents: {},
         // preflop range tracking (all observed hole cards)
         rangeHands: [],
         // full hand history (all dealt hands, showdown or not)
@@ -93,9 +171,24 @@ export function analyseLog(rows, viewerName = null) {
   function commitHand(hand) {
     if (!hand || !hand.id) return;
     handCount++;
-    handActionLogs[hand.number] = hand.actionLog.slice();
 
     const dealtNames = Object.keys(hand.players);
+    const positions = positionsFor(hand);
+    // Prepend a `players` meta entry (seats, starting stacks, positions, blinds)
+    // so the hand replayer can draw the table. Consumers that walk the log for
+    // actions ignore non-action entries.
+    const playersMeta = {
+      type: 'players',
+      dealer: hand.dealer, sb: hand.sb, bb: hand.bb, bbSize: hand.bbSize,
+      players: dealtNames.map(n => ({
+        name: n,
+        seat: hand.seats[n] ?? null,
+        stack: hand.players[n]?.stack ?? null,
+        pos: positions[n] ?? null,
+      })),
+    };
+    handActionLogs[hand.number] = [playersMeta, ...hand.actionLog];
+
     const potSize = hand.winners.reduce((s, w) => s + w.amount, 0);
     const winnerSet = new Set(hand.winners.map(w => w.name));
     // A split pot has two or more *distinct* winners sharing the same showdown.
@@ -109,22 +202,71 @@ export function analyseLog(rows, viewerName = null) {
       .reduce((s, w) => s + w.amount, 0);
     const viewerName = findViewerName(hand);
 
-    // ── VPIP / PFR / fold tracking ────────────────────────────────────────────
+    // ── VPIP / PFR / fold + position + showdown-funnel tracking ────────────────
+    const reachedFlop = hand.board.length >= 3;
     for (const name of dealtNames) {
       const p = getPlayer(name);
       p.handsDealt++;
 
       const actions = hand.preflopActions[name] || [];
       const firstVoluntary = actions.find(a => ['call', 'raise', 'bet'].includes(a));
+      const raisedPreflop = actions.includes('raise') || actions.includes('bet');
+      const foldedPreflop = actions.includes('fold');
 
       if (firstVoluntary) p.vpipHands++;
-      if (actions.includes('raise') || actions.includes('bet')) p.pfrHands++;
-      if (actions.includes('fold')) p.preflopFolds++;
+      if (raisedPreflop) p.pfrHands++;
+      if (foldedPreflop) p.preflopFolds++;
 
       for (const a of actions) {
         if (a === 'raise' || a === 'bet') p.totalBetsRaises++;
         else if (a === 'call') p.totalCalls++;
         else if (a === 'check') p.totalChecks++;
+      }
+
+      // Per-position counts (hands / vpip / pfr / wins).
+      const pos = positions[name];
+      if (pos && p.posStats[pos]) {
+        const ps = p.posStats[pos];
+        ps.h++;
+        if (firstVoluntary) ps.v++;
+        if (raisedPreflop) ps.p++;
+        if (winnerSet.has(name)) ps.w++;
+      }
+
+      // Showdown funnel: saw flop → reached showdown (WTSD) → won there (W$SD).
+      if (reachedFlop && !foldedPreflop) {
+        p.sawFlopHands++;
+        if (hand.shownCards[name]) {
+          p.wtsdHands++;
+          if (winnerSet.has(name)) p.wsdHands++;
+        }
+      }
+
+      // Big-blind size seen this hand (for a representative bb/100).
+      if (hand.bbSize) p.bbCounts[hand.bbSize] = (p.bbCounts[hand.bbSize] || 0) + 1;
+    }
+
+    // ── 3-bet (preflop) and continuation-bet (flop) ───────────────────────────
+    accumulatePreflopAggression(hand, getPlayer);
+
+    // ── Head-to-head showdown records ─────────────────────────────────────────
+    const shownDown = Object.keys(hand.shownCards).filter(n => {
+      const c = hand.shownCards[n]; return c && c[0] && c[1];
+    });
+    // For each player at showdown, record their pot result (won solo / lost)
+    // against *every* opponent who also reached showdown — so the W–L matches
+    // the hands listed in the drill-down (incl. multiway pots a third player
+    // scooped). Chops are pushes and don't count toward W or L.
+    if (shownDown.length >= 2) {
+      for (const a of shownDown) {
+        const aWon = winnerSet.has(a);
+        if (aWon && isSplitPot) continue; // a chopped — push, skip
+        for (const b of shownDown) {
+          if (a === b) continue;
+          const pa = getPlayer(a);
+          const rec = pa.vsOpponents[b] || (pa.vsOpponents[b] = { w: 0, l: 0 });
+          if (aWon) rec.w++; else rec.l++;
+        }
       }
     }
 
@@ -375,11 +517,13 @@ export function analyseLog(rows, viewerName = null) {
     if (stacksMatch) {
       const parts = stacksMatch[1].split(' | ');
       for (const part of parts) {
-        const m = part.match(/^#\d+ "(.+)" \((\d+)\)$/);
+        const m = part.match(/^#(\d+) "(.+)" \((\d+)\)$/);
         if (m) {
-          const name = extractName(m[1]);
-          const stack = parseInt(m[2], 10);
+          const seat = parseInt(m[1], 10);
+          const name = extractName(m[2]);
+          const stack = parseInt(m[3], 10);
           currentHand.players[name] = { stack };
+          currentHand.seats[name] = seat; // physical seat for position ordering
           // Snapshot for end-of-log "still seated" cash-out fallback (see field comment).
           getPlayer(name).lastSeenStack = stack;
         }
@@ -495,7 +639,7 @@ export function analyseLog(rows, viewerName = null) {
       const amount = parseInt(blindMatch[3], 10);
       currentHand.preflopActions[name] = currentHand.preflopActions[name] || [];
       currentHand.preflopActions[name].push('blind');
-      if (isSmall) currentHand.sb = name; else currentHand.bb = name;
+      if (isSmall) currentHand.sb = name; else { currentHand.bb = name; currentHand.bbSize = amount; }
       currentHand.actionLog.push({ type: 'action', street: 'preflop', player: name, action: isSmall ? 'post-sb' : 'post-bb', amount });
       continue;
     }

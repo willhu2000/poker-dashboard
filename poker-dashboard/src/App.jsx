@@ -1,13 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import './index.css';
 import { parseLog, extractGameDate, extractPlayerNames, formatSessionName, hashContent } from './parser.js';
 import { analyseLog } from './stats.js';
 import { loadSessions, saveSession, deleteSession, mergeSessions, isDuplicate, initSessions } from './sessions.js';
 import { loadPlayerConfig, savePlayerConfig, resolveAlias, resolveDisplayName } from './playerConfig.js';
-import Dashboard from './components/Dashboard.jsx';
 import SessionsHome from './components/SessionsHome.jsx';
-import TrendsView from './components/TrendsView.jsx';
 import ViewerPickerModal from './components/ViewerPickerModal.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
+
+// Lazy-load the chart-heavy views so Recharts isn't in the initial (home) bundle.
+const Dashboard = lazy(() => import('./components/Dashboard.jsx'));
+const TrendsView = lazy(() => import('./components/TrendsView.jsx'));
 
 // Auto-loaded sample logs (placed in /public). Loaded once on first launch
 // when localStorage has no sessions yet.
@@ -176,11 +179,29 @@ export default function App() {
     );
   }
 
+  // Fallback shown when a view throws during render — lets the user escape back
+  // to the (always-safe) sessions list or reload, instead of a blank screen.
+  const viewFallback = (err, reset) => (
+    <div className="error-boundary">
+      <h2>This view hit an error</h2>
+      <p>{String(err?.message || err)}</p>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+        <button className="btn btn-primary" onClick={() => { reset(); setView(null); }}>Back to Sessions</button>
+        <button className="btn btn-ghost" onClick={() => location.reload()}>Reload</button>
+      </div>
+    </div>
+  );
+  const ViewFallback = <div className="loading-screen">Loading…</div>;
+
   if (view?.type === 'trends') {
     const currentSessions = loadSessions();
     return (
       <div className="app">
-        <TrendsView sessions={currentSessions} onBack={() => setView(null)} playerConfig={playerConfig} />
+        <ErrorBoundary key="trends" fallback={viewFallback}>
+          <Suspense fallback={ViewFallback}>
+            <TrendsView sessions={currentSessions} onBack={() => setView(null)} playerConfig={playerConfig} />
+          </Suspense>
+        </ErrorBoundary>
         {modal}
       </div>
     );
@@ -207,23 +228,27 @@ export default function App() {
 
     return (
       <div className="app">
-        <Dashboard
-          data={data}
-          fileName={label}
-          isMerged={view.type === 'merged'}
-          sessionCount={currentSessions.length}
-          selectedIds={selectedIds}
-          allSessions={currentSessions}
-          viewerNames={viewerNames}
-          onBack={() => setView(null)}
-          onViewMerged={() => setView({ type: 'merged', selectedIds: currentSessions.map(s => s.id) })}
-          onViewTrends={() => setView({ type: 'trends' })}
-          onUpdateSessions={(ids) => setView({ type: 'merged', selectedIds: ids })}
-          onAddSession={handleAddSession}
-          playerConfig={playerConfig}
-          onPlayerConfigChange={handlePlayerConfigChange}
-          error={error}
-        />
+        <ErrorBoundary key={`dash-${selectedIds.join(',')}`} fallback={viewFallback}>
+          <Suspense fallback={ViewFallback}>
+            <Dashboard
+              data={data}
+              fileName={label}
+              isMerged={view.type === 'merged'}
+              sessionCount={currentSessions.length}
+              selectedIds={selectedIds}
+              allSessions={currentSessions}
+              viewerNames={viewerNames}
+              onBack={() => setView(null)}
+              onViewMerged={() => setView({ type: 'merged', selectedIds: currentSessions.map(s => s.id) })}
+              onViewTrends={() => setView({ type: 'trends' })}
+              onUpdateSessions={(ids) => setView({ type: 'merged', selectedIds: ids })}
+              onAddSession={handleAddSession}
+              playerConfig={playerConfig}
+              onPlayerConfigChange={handlePlayerConfigChange}
+              error={error}
+            />
+          </Suspense>
+        </ErrorBoundary>
         {modal}
       </div>
     );
@@ -231,18 +256,20 @@ export default function App() {
 
   return (
     <div className="app">
-      <SessionsHome
-        sessions={sessions}
-        onView={(id) => setView({ type: 'single', id })}
-        onViewMerged={() => setView({ type: 'merged', selectedIds: sessions.map(s => s.id) })}
-        onViewTrends={() => setView({ type: 'trends' })}
-        onDelete={handleDelete}
-        onNewFile={handleNewFile}
-        error={error}
-        playerConfig={playerConfig}
-        onPlayerConfigChange={handlePlayerConfigChange}
-        viewerName={playerConfig?.viewer ? resolveDisplayName(playerConfig.viewer, playerConfig) : null}
-      />
+      <ErrorBoundary key="home" fallback={viewFallback}>
+        <SessionsHome
+          sessions={sessions}
+          onView={(id) => setView({ type: 'single', id })}
+          onViewMerged={() => setView({ type: 'merged', selectedIds: sessions.map(s => s.id) })}
+          onViewTrends={() => setView({ type: 'trends' })}
+          onDelete={handleDelete}
+          onNewFile={handleNewFile}
+          error={error}
+          playerConfig={playerConfig}
+          onPlayerConfigChange={handlePlayerConfigChange}
+          viewerName={playerConfig?.viewer ? resolveDisplayName(playerConfig.viewer, playerConfig) : null}
+        />
+      </ErrorBoundary>
       {modal}
     </div>
   );

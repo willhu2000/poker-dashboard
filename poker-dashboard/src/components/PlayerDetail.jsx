@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { bestHand } from '../handEval.js';
+import { playActionSound } from '../sounds.js';
 import CoachingReport from './CoachingReport.jsx';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
@@ -214,7 +215,7 @@ function ActionLog({ log }) {
   let cur = { street:'preflop', board:null, actions:[] };
   for (const ev of log) {
     if (ev.type==='street') { groups.push(cur); cur={street:ev.street,board:ev.board,actions:[]}; }
-    else cur.actions.push(ev);
+    else if (ev.type==='action') cur.actions.push(ev);
   }
   groups.push(cur);
   return (
@@ -225,19 +226,181 @@ function ActionLog({ log }) {
             {g.street.toUpperCase()}
             {g.board?.length>0&&<span className="al-board">{g.board.map((c,i)=><CardBadge key={i} card={c}/>)}</span>}
           </div>
-          {g.actions.map((act,ai)=>{
-            const showCards = act.action==='show' && (act.cards||[]).filter(c=>c&&c.rank);
-            return (
-              <div key={ai} className="al-action">
-                <span className="al-player">{act.player}</span>
-                {showCards && showCards.length
-                  ? <span className="al-verb">shows {showCards.map((c,i)=><CardBadge key={i} card={c}/>)}</span>
-                  : <span className="al-verb">{ACT_TEXT[act.action]?.(act)??act.action}</span>}
-              </div>
-            );
-          })}
+          {g.actions.map((act,ai)=>(
+            <div key={ai} className="al-action">
+              <span className="al-player">{act.player}</span>
+              <span className="al-verb">{actionVerb(act)}</span>
+            </div>
+          ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Render an action's verb, expanding a "show" into "shows ♠♥" with the cards.
+function actionVerb(ev) {
+  const showCards = ev.action === 'show' && (ev.cards || []).filter(c => c && c.rank);
+  if (showCards && showCards.length) {
+    return <>shows {showCards.map((c, i) => <CardBadge key={i} card={c} />)}</>;
+  }
+  return ACT_TEXT[ev.action]?.(ev) ?? ev.action;
+}
+
+// Step a hand's action log into frames carrying a full table snapshot (every
+// player's stack, current bet, fold state and cards) plus board + pot. Reads the
+// leading `players` meta entry (seats / starting stacks / positions) when present.
+function buildReplayFrames(log, heroName, heroCards) {
+  const meta = (log || []).find(e => e.type === 'players');
+  const order = meta ? meta.players.slice() : [];
+  const state = {};
+  for (const pm of order) {
+    state[pm.name] = {
+      name: pm.name, seat: pm.seat, pos: pm.pos,
+      stack: pm.stack ?? 0, streetBet: 0, folded: false,
+      cards: (heroName && pm.name === heroName && heroCards) ? heroCards.slice() : null,
+      isHero: !!(heroName && pm.name === heroName),
+    };
+  }
+  const ensure = (name) => state[name] ||
+    (state[name] = { name, seat: null, pos: null, stack: 0, streetBet: 0, folded: false, cards: null, isHero: false });
+  const cloneP = (p) => ({ ...p, cards: p.cards ? p.cards.slice() : null });
+
+  const frames = [];
+  let street = 'preflop', board = [], pot = 0;
+  const order2 = order.length ? order.map(pm => pm.name) : null;
+
+  for (const ev of log || []) {
+    if (ev.type === 'players') continue;
+    if (ev.type === 'street') {
+      street = ev.street; board = ev.board || board;
+      for (const s of Object.values(state)) s.streetBet = 0;
+      continue;
+    }
+    if (ev.type !== 'action') continue;
+    const s = ensure(ev.player);
+    if (ev.action === 'fold') s.folded = true;
+    else if (ev.action === 'show') { if (ev.cards?.length) s.cards = ev.cards.filter(c => c && c.rank); }
+    else if (ev.action === 'collect') { s.stack += ev.amount || 0; pot = Math.max(0, pot - (ev.amount || 0)); }
+    else {
+      let delta = 0;
+      if (ev.action === 'post-sb' || ev.action === 'post-bb' || ev.action === 'bet') delta = ev.amount || 0;
+      else if (ev.action === 'call' || ev.action === 'raise') delta = Math.max(0, (ev.amount || 0) - s.streetBet);
+      if (delta > 0) { s.stack -= delta; s.streetBet += delta; pot += delta; }
+    }
+    const names = order2 || Object.keys(state);
+    frames.push({
+      street, board: board.slice(), pot, acting: ev.player, ev,
+      players: names.map(n => cloneP(state[n])),
+    });
+  }
+  return { frames, meta };
+}
+
+// One seat around the table, positioned at `angle` (radians) on the ellipse.
+function ReplaySeat({ p, angle, acting, isDealer }) {
+  const x = 50 + 44 * Math.cos(angle);
+  const y = 50 + 46 * Math.sin(angle);
+  return (
+    <div
+      className={`rt-seat${acting ? ' acting' : ''}${p.folded ? ' folded' : ''}${p.isHero ? ' hero' : ''}`}
+      style={{ left: `${x}%`, top: `${y}%` }}
+    >
+      <div className="rt-cards">
+        {p.cards && p.cards.length
+          ? p.cards.map((c, k) => <CardBadge key={k} card={c} />)
+          : (!p.folded && <><span className="rt-cardback" /><span className="rt-cardback" /></>)}
+      </div>
+      <div className="rt-name">
+        {isDealer && <span className="rt-dealer" title="Dealer">D</span>}
+        {p.pos && <span className="rt-pos">{p.pos}</span>}
+        <span className="rt-pname">{p.name}</span>
+      </div>
+      <div className="rt-stack">{Math.max(0, p.stack).toLocaleString()}</div>
+      {p.streetBet > 0 && <div className="rt-bet">{p.streetBet.toLocaleString()}</div>}
+    </div>
+  );
+}
+
+// Step-through poker-table replay of a single hand, opened as a modal overlay.
+function HandReplayer({ log, hand, heroName, heroCards, onClose }) {
+  const { frames, meta } = useMemo(() => buildReplayFrames(log, heroName, heroCards), [log, heroName, heroCards]);
+  const [i, setI] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const soundRef = useRef(soundOn);
+  soundRef.current = soundOn;
+
+  useEffect(() => {
+    if (!playing) return undefined;
+    if (i >= frames.length - 1) { setPlaying(false); return undefined; }
+    const t = setTimeout(() => setI(x => Math.min(x + 1, frames.length - 1)), 1100);
+    return () => clearTimeout(t);
+  }, [playing, i, frames.length]);
+
+  // Play the current action's sound effect whenever we step to a new frame.
+  useEffect(() => {
+    if (!soundRef.current) return;
+    const ev = frames[Math.min(i, frames.length - 1)]?.ev;
+    if (ev) playActionSound(ev.action);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [i]);
+
+  if (!frames.length) return null;
+  const f = frames[Math.min(i, frames.length - 1)];
+
+  // Order seats so the hero (or first player) sits at the bottom, then spread
+  // the rest evenly around the ellipse going clockwise.
+  const heroIdx = f.players.findIndex(p => p.isHero);
+  const rot = heroIdx >= 0 ? heroIdx : 0;
+  const n = f.players.length || 1;
+  const seats = f.players.map((_, k) => f.players[(rot + k) % n]);
+
+  return (
+    <div className="replay-overlay" onClick={onClose}>
+      <div className="replay-modal table" onClick={e => e.stopPropagation()}>
+        <div className="replay-head">
+          <span>▶ Replay — Hand #{hand?.num}{hand?.sessionDate ? ` · ${fmtDate(hand.sessionDate)}` : ''}</span>
+          <button className="replay-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
+        <div className="rt-felt">
+          {seats.map((p, k) => (
+            <ReplaySeat
+              key={p.name}
+              p={p}
+              angle={(90 + k * 360 / n) * Math.PI / 180}
+              acting={p.name === f.acting}
+              isDealer={meta?.dealer === p.name}
+            />
+          ))}
+          <div className="rt-center">
+            <div className="rt-board">
+              {[0, 1, 2, 3, 4].map(k => (
+                f.board[k]
+                  ? <CardBadge key={k} card={f.board[k]} />
+                  : <span key={k} className="rt-board-slot" />
+              ))}
+            </div>
+            <div className="rt-pot">Pot {f.pot.toLocaleString()}</div>
+          </div>
+        </div>
+
+        <div className="replay-current">
+          <span className="rt-street-tag">{f.street.toUpperCase()}</span>
+          <span className="al-player">{f.ev.player}</span>
+          <span className="al-verb">{actionVerb(f.ev)}</span>
+        </div>
+
+        <div className="replay-controls">
+          <button onClick={() => { setPlaying(false); setI(0); }} title="Restart">⏮</button>
+          <button onClick={() => { setPlaying(false); setI(x => Math.max(0, x - 1)); }} disabled={i <= 0} title="Previous">◀</button>
+          <button className="replay-play" onClick={() => setPlaying(p => !p)}>{playing ? '⏸ Pause' : '▶ Play'}</button>
+          <button onClick={() => { setPlaying(false); setI(x => Math.min(frames.length - 1, x + 1)); }} disabled={i >= frames.length - 1} title="Next">▶</button>
+          <button onClick={() => setSoundOn(s => !s)} title={soundOn ? 'Mute sound' : 'Unmute sound'}>{soundOn ? '🔊' : '🔇'}</button>
+          <span className="replay-progress">{i + 1}/{frames.length}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -254,7 +417,7 @@ function SortTh({ col, children, style, sortCol, sortDir, onSort }) {
 }
 
 // A clickable "biggest pot" row that expands to show the hand's play-by-play.
-function BigPotCard({ kind, rank, h, isMerged, amountNode, extraDetails, expanded, onToggle, log }) {
+function BigPotCard({ kind, rank, h, isMerged, amountNode, extraDetails, expanded, onToggle, log, onReplay }) {
   return (
     <div
       className={`big-pot-card ${kind}${expanded ? ' expanded' : ''}`}
@@ -281,7 +444,10 @@ function BigPotCard({ kind, rank, h, isMerged, amountNode, extraDetails, expande
       </div>
       {expanded && (
         <div className="bp-runout" onClick={(e) => e.stopPropagation()}>
-          <div className="bp-runout-title">Play by Play</div>
+          <div className="bp-runout-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            Play by Play
+            {onReplay && log?.length > 0 && <button className="replay-btn" onClick={onReplay}>▶ Replay</button>}
+          </div>
           <ActionLog log={log} />
         </div>
       )}
@@ -536,6 +702,141 @@ function SimpleStats({ player: p, biggestWins, biggestSplits, biggestLosses, bad
   );
 }
 
+// ── Advanced stats ────────────────────────────────────────────────────────────
+const POS_ORDER = ['BTN', 'SB', 'BB', 'LP', 'MP', 'EP'];
+const POS_LABEL = { BTN: 'Button', SB: 'Small Blind', BB: 'Big Blind', LP: 'Late (CO)', MP: 'Middle', EP: 'Early' };
+const pctOf = (num, den) => (den > 0 ? +(num / den * 100).toFixed(1) : null);
+const fmtPct = (v) => (v == null ? '—' : `${v}%`);
+
+function modeBB(bbCounts) {
+  let best = null, bestCnt = -1;
+  for (const [size, cnt] of Object.entries(bbCounts || {})) {
+    if (cnt > bestCnt) { bestCnt = cnt; best = +size; }
+  }
+  return best;
+}
+
+function AdvTile({ label, value, sub, color }) {
+  return (
+    <div className="adv-tile">
+      <div className="adv-tile-label">{label}</div>
+      <div className="adv-tile-value" style={color ? { color } : undefined}>{value}</div>
+      {sub && <div className="adv-tile-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function AdvancedStats({ player: p, isMerged = false, getLog, onReplay }) {
+  const [openOpp, setOpenOpp] = useState(null); // expanded head-to-head opponent
+  const [openHand, setOpenHand] = useState(null); // expanded H2H hand key
+  const posRows = POS_ORDER
+    .map(k => ({ k, ...(p.posStats?.[k] || { h: 0, v: 0, p: 0, w: 0 }) }))
+    .filter(r => r.h > 0);
+  const wtsd = pctOf(p.wtsdHands, p.sawFlopHands);
+  const wsd = pctOf(p.wsdHands, p.wtsdHands);
+  const threeBet = pctOf(p.threeBets, p.threeBetOpp);
+  const cbet = pctOf(p.cbets, p.cbetOpp);
+  const bb = modeBB(p.bbCounts);
+  const bbPer100 = bb && p.handsDealt ? +((p.netChips / bb) / p.handsDealt * 100).toFixed(1) : null;
+  const h2h = Object.entries(p.vsOpponents || {})
+    .map(([name, r]) => ({ name, w: r.w || 0, l: r.l || 0, n: (r.w || 0) + (r.l || 0) }))
+    .filter(o => o.n > 0)
+    .sort((a, b) => b.n - a.n);
+
+  const hasAny = posRows.length || wtsd != null || threeBet != null || cbet != null || bbPer100 != null || h2h.length;
+  if (!hasAny) return null;
+
+  return (
+    <>
+      <div className="section-title" style={{ fontSize: '0.9rem', marginTop: 16 }}>
+        📐 Advanced Stats
+        <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.78rem', marginLeft: 8 }}>
+          — positional play, showdown funnel, 3-bet/c-bet, head-to-head
+        </span>
+      </div>
+
+      <div className="adv-tiles">
+        <AdvTile label="bb / 100" value={bbPer100 == null ? '—' : `${bbPer100 >= 0 ? '+' : ''}${bbPer100}`}
+          color={bbPer100 == null ? undefined : (bbPer100 >= 0 ? 'var(--win)' : 'var(--lose)')}
+          sub={bb ? `big blind = ${bb}` : 'win rate'} />
+        <AdvTile label="WTSD" value={fmtPct(wtsd)} sub="went to showdown" />
+        <AdvTile label="W$SD" value={fmtPct(wsd)} sub="won at showdown" />
+        <AdvTile label="3-Bet" value={fmtPct(threeBet)} sub="preflop re-raise" />
+        <AdvTile label="C-Bet" value={fmtPct(cbet)} sub="flop, as aggressor" />
+      </div>
+
+      {posRows.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="adv-pos-table">
+            <thead>
+              <tr><th>Position</th><th>Hands</th><th>VPIP</th><th>PFR</th><th>Win %</th></tr>
+            </thead>
+            <tbody>
+              {posRows.map(r => (
+                <tr key={r.k}>
+                  <td><strong>{POS_LABEL[r.k]}</strong></td>
+                  <td>{r.h}</td>
+                  <td>{fmtPct(pctOf(r.v, r.h))}</td>
+                  <td>{fmtPct(pctOf(r.p, r.h))}</td>
+                  <td>{fmtPct(pctOf(r.w, r.h))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {h2h.length > 0 && (
+        <div className="adv-h2h">
+          <div className="adv-h2h-label">
+            Head-to-head at showdown
+            <span style={{ textTransform: 'none', fontWeight: 400, marginLeft: 6 }}>— click an opponent to see the hands</span>
+          </div>
+          <div className="adv-h2h-list">
+            {h2h.map(o => (
+              <button
+                key={o.name}
+                className={`adv-h2h-item${openOpp === o.name ? ' active' : ''}`}
+                onClick={() => { setOpenOpp(x => (x === o.name ? null : o.name)); setOpenHand(null); }}
+              >
+                vs {o.name}: <span className="pos">{o.w}W</span>–<span className="neg">{o.l}L</span>
+                <span className="adv-h2h-chev">{openOpp === o.name ? ' ▾' : ' ▸'}</span>
+              </button>
+            ))}
+          </div>
+          {openOpp && (() => {
+            const hands = (p.handsHistory || []).filter(h =>
+              h.wasShown && (h.opponents || []).some(op => op.name === openOpp && op.c1));
+            if (!hands.length) return <p className="cr-empty" style={{ marginTop: 8 }}>No showdown hands recorded vs {openOpp}.</p>;
+            return (
+              <div className="big-pot-list" style={{ marginTop: 8 }}>
+                {hands.map((h, idx) => {
+                  const key = `h2h-${idx}`;
+                  const amt = (h.wonAmount ?? h.potSize).toLocaleString();
+                  const amountNode = h.isSplit
+                    ? <span className="bp-amount split">Split {amt}</span>
+                    : h.won ? <span className="bp-amount pos">Won {amt}</span>
+                      : <span className="bp-amount neg">Lost {h.potSize.toLocaleString()}</span>;
+                  const oc = (h.opponents || []).find(op => op.name === openOpp);
+                  return (
+                    <BigPotCard
+                      key={key} kind={h.isSplit ? 'split' : h.won ? 'win' : 'loss'} rank={null} h={h} isMerged={isMerged}
+                      amountNode={amountNode}
+                      extraDetails={oc && oc.c1 && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 8, display: 'inline-flex', alignItems: 'center', gap: 2 }}>{openOpp}: <CardBadge card={oc.c1} /><CardBadge card={oc.c2} /></span>}
+                      expanded={openHand === key} onToggle={() => setOpenHand(x => (x === key ? null : key))}
+                      log={getLog ? getLog(h) : []} onReplay={onReplay ? () => onReplay(h) : null}
+                    />
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Chip count / net profit over time ─────────────────────────────────────────
 // Builds a chronological series of the player's stack entering each hand.
 //   mode 'stack': the table stack, which resets to 0 between sessions (each
@@ -662,6 +963,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
   // expanded to show its play-by-play. Keyed `${section}-${index}`.
   const [expandedKeyHand, setExpandedKeyHand] = useState(null);
   const toggleKeyHand = (key) => setExpandedKeyHand(prev => (prev === key ? null : key));
+  // Hand currently open in the replayer modal ({ log, hand }), or null.
+  const [replay, setReplay] = useState(null);
   // Inline rename (only when an onRename handler is supplied).
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -676,6 +979,15 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
     const key = entry.sessionId ? `${entry.sessionId}_${entry.num}` : entry.num;
     return handActionLogs[key] ?? entry.actionLog ?? [];
   }
+
+  // Open the hand replayer for a hand entry, marking this player as the hero so
+  // their hole cards are shown from the start.
+  const openReplay = (entry) => setReplay({
+    log: getActionLog(entry),
+    hand: entry,
+    heroName: p.name,
+    heroCards: entry.c1 && entry.c2 ? [entry.c1, entry.c2] : null,
+  });
 
   const tags = styleTag(p);
 
@@ -968,6 +1280,9 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
       {/* ── Everything below is detailed mode only ─────────────────────────── */}
       {detailMode && <>
 
+      {/* ── Advanced stats (positions, showdown funnel, 3bet/cbet, H2H) ───────── */}
+      <AdvancedStats player={p} isMerged={isMerged} getLog={getActionLog} onReplay={openReplay} />
+
       {/* ── Category drill-down ───────────────────────────────────────────────── */}
       {selectedCategory && (
         <div className="category-drilldown">
@@ -1034,7 +1349,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                 <BigPotCard
                   key={key} kind="win" rank={i + 1} h={h} isMerged={isMerged}
                   amountNode={<span className="bp-amount pos">Won {(h.wonAmount ?? h.potSize).toLocaleString()}</span>}
-                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)} onReplay={() => openReplay(h)}
                 />
               );
             })}
@@ -1059,7 +1374,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                   key={key} kind="split" rank={i + 1} h={h} isMerged={isMerged}
                   amountNode={<span className="bp-amount split">Took {(h.wonAmount ?? h.potSize).toLocaleString()} <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.74rem' }}>of {h.potSize.toLocaleString()}</span></span>}
                   extraDetails={h.splitWith?.length > 0 && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 8 }}>split with {h.splitWith.join(', ')}</span>}
-                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)} onReplay={() => openReplay(h)}
                 />
               );
             })}
@@ -1084,7 +1399,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                   key={key} kind="loss" rank={i + 1} h={h} isMerged={isMerged}
                   amountNode={<span className="bp-amount neg">Lost {h.potSize.toLocaleString()}</span>}
                   extraDetails={h.winnerHandName && <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: 4 }}>vs {h.winnerHandName}</span>}
-                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)} onReplay={() => openReplay(h)}
                 />
               );
             })}
@@ -1115,7 +1430,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                 <BigPotCard
                   key={key} kind={h.won ? 'win' : 'loss'} rank={null} h={h} isMerged={isMerged}
                   amountNode={<span className={`bp-amount ${h.won ? 'pos' : 'neg'}`}>{h.won ? `Won ${(h.wonAmount ?? h.potSize).toLocaleString()}` : `Lost ${h.potSize.toLocaleString()}`}</span>}
-                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)}
+                  expanded={expandedKeyHand === key} onToggle={() => toggleKeyHand(key)} log={getActionLog(h)} onReplay={() => openReplay(h)}
                 />
               );
             })}
@@ -1175,7 +1490,10 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
               )}
               {expanded && (
                 <div style={{marginTop:10}} onClick={(e) => e.stopPropagation()}>
-                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
+                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4,display:'flex',alignItems:'center',gap:8}}>
+                    Play by Play
+                    {getActionLog(so).length > 0 && <button className="replay-btn" onClick={() => openReplay(so)}>▶ Replay</button>}
+                  </div>
                   <ActionLog log={getActionLog(so)}/>
                 </div>
               )}
@@ -1237,7 +1555,10 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
               )}
               {expanded && (
                 <div style={{marginTop:10}} onClick={(e) => e.stopPropagation()}>
-                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
+                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4,display:'flex',alignItems:'center',gap:8}}>
+                    Play by Play
+                    {getActionLog(bb).length > 0 && <button className="replay-btn" onClick={() => openReplay(bb)}>▶ Replay</button>}
+                  </div>
                   <ActionLog log={getActionLog(bb)}/>
                 </div>
               )}
@@ -1303,7 +1624,10 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
               )}
               {expanded && (
                 <div style={{marginTop:10}} onClick={(e) => e.stopPropagation()}>
-                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>Play by Play</div>
+                  <div style={{fontSize:'0.7rem',fontWeight:700,textTransform:'uppercase',color:'var(--muted)',marginBottom:4,display:'flex',alignItems:'center',gap:8}}>
+                    Play by Play
+                    {getActionLog(c).length > 0 && <button className="replay-btn" onClick={() => openReplay(c)}>▶ Replay</button>}
+                  </div>
                   <ActionLog log={getActionLog(c)}/>
                 </div>
               )}
@@ -1459,9 +1783,12 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                               </span>
                             </div>
                           )}
-                          {detailMode && (
+                          {detailMode && getActionLog(h).length > 0 && (
                             <div className="hd-row" style={{flexDirection:'column',gap:4}}>
-                              <span className="hd-label">Play by Play</span>
+                              <span className="hd-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                Play by Play
+                                <button className="replay-btn" onClick={(e) => { e.stopPropagation(); openReplay(h); }}>▶ Replay</button>
+                              </span>
                               <ActionLog log={getActionLog(h)}/>
                             </div>
                           )}
@@ -1484,6 +1811,8 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
       </p>
 
       </>}
+
+      {replay && <HandReplayer log={replay.log} hand={replay.hand} heroName={replay.heroName} heroCards={replay.heroCards} onClose={() => setReplay(null)} />}
     </div>
   );
 }

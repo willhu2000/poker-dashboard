@@ -13,13 +13,19 @@ const KEY = 'poker-sessions'; // legacy localStorage key (data is migrated into 
 //       the raw CSV (`rawLog`) so future bumps re-derive everything automatically.
 //   v4: `show` action-log entries carry the shown cards (play-by-play renders the
 //       actual hand instead of a generic "shows hand").
+//   v5: advanced analytics — per-position counts, showdown funnel (WTSD/W$SD),
+//       3-bet/c-bet, bb sizes, and head-to-head showdown records.
+//   v6: action logs lead with a `players` meta entry (seats, stacks, positions,
+//       blinds) so the hand replayer can draw a poker table.
+//   v7: fix head-to-head — record each player's pot result vs every opponent at
+//       showdown (multiway co-losers were previously skipped).
 //
 // Sessions that carry a `rawLog` self-heal on load (initSessions re-runs the
 // parser/analyser via migrateRecords), so they NEVER need a manual re-upload
 // again. Only legacy sessions saved without a rawLog can't auto-upgrade — those
 // are what hasOutdatedSessions() flags. (Split fields are still back-filled from
 // stored action logs for them too; see backfillSplitFields.)
-export const STATS_SCHEMA_VERSION = 4;
+export const STATS_SCHEMA_VERSION = 7;
 
 // ── In-memory session cache ───────────────────────────────────────────────────
 // IndexedDB is async, but the rest of the app expects synchronous reads. We keep
@@ -33,6 +39,13 @@ let initPromise = null; // memoised so init runs exactly once (StrictMode-safe)
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+const POS_KEYS = ['BTN', 'SB', 'BB', 'LP', 'MP', 'EP'];
+function emptyPosStats() {
+  const out = {};
+  for (const k of POS_KEYS) out[k] = { h: 0, v: 0, p: 0, w: 0 };
+  return out;
 }
 
 function byNewest(a, b) {
@@ -289,6 +302,10 @@ export function mergeSessions(sessions, playerConfig = null) {
           streetActions: { preflop: 0, flop: 0, turn: 0, river: 0 },
           premiumHandsShown: 0, allHandsShown: 0,
           handsWon: 0, handsSplit: 0, potsWon: 0,
+          posStats: emptyPosStats(),
+          sawFlopHands: 0, wtsdHands: 0, wsdHands: 0,
+          threeBetOpp: 0, threeBets: 0, cbetOpp: 0, cbets: 0,
+          bbCounts: {}, vsOpponents: {},
           rangeHands: [],
           handsHistory: [],
           badBeats: [],
@@ -330,6 +347,28 @@ export function mergeSessions(sessions, playerConfig = null) {
       }
       for (const s of ['preflop', 'flop', 'turn', 'river']) {
         p.streetActions[s] += sp.streetActions?.[s] || 0;
+      }
+      // ── Advanced analytics accumulators ──────────────────────────────────────
+      for (const pos of POS_KEYS) {
+        const src = sp.posStats?.[pos];
+        if (!src) continue;
+        const dst = p.posStats[pos];
+        dst.h += src.h || 0; dst.v += src.v || 0; dst.p += src.p || 0; dst.w += src.w || 0;
+      }
+      p.sawFlopHands += sp.sawFlopHands || 0;
+      p.wtsdHands    += sp.wtsdHands || 0;
+      p.wsdHands     += sp.wsdHands || 0;
+      p.threeBetOpp  += sp.threeBetOpp || 0;
+      p.threeBets    += sp.threeBets || 0;
+      p.cbetOpp      += sp.cbetOpp || 0;
+      p.cbets        += sp.cbets || 0;
+      for (const [size, cnt] of Object.entries(sp.bbCounts || {})) {
+        p.bbCounts[size] = (p.bbCounts[size] || 0) + cnt;
+      }
+      for (const [opp, rec] of Object.entries(sp.vsOpponents || {})) {
+        const oppName = resolveAlias(opp, playerConfig); // group the same opponent across sessions
+        const cur = p.vsOpponents[oppName] || (p.vsOpponents[oppName] = { w: 0, l: 0 });
+        cur.w += rec.w || 0; cur.l += rec.l || 0;
       }
     }
   }

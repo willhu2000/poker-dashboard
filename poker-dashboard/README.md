@@ -1,5 +1,7 @@
 # ♠ Poker Dashboard
 
+[![CI](https://github.com/willhu2000/poker-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/willhu2000/poker-dashboard/actions/workflows/ci.yml)
+
 A web app for analysing your weekly [PokerNow](https://www.pokernow.club/) home game. Upload your hand history CSV files to see stats like VPIP, PFR, Aggression Factor, net chips, and preflop range grids for every player. Sessions are saved locally in your browser so you can add a new file each week and view combined stats over time.
 
 ---
