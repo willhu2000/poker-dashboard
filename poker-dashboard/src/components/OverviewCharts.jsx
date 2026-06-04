@@ -1,20 +1,7 @@
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
-
-const COLORS = [
-  '#6c63ff','#00d4aa','#ffd166','#ff6b6b','#e91e8c',
-  '#74b9ff','#55efc4','#fdcb6e','#e17055','#a29bfe',
-  '#00cec9','#f78fb3','#7bed9f','#cf6a87','#3dc1d3',
-  '#f19066','#c44569','#546de5','#e15f41','#778beb',
-];
-
-// Deterministic per-player swatch (same scheme as Dashboard hero avatars).
-function colorFor(name) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return COLORS[h % COLORS.length];
-}
+import { PLAYER_COLORS, colorFor } from '../colors.js';
 function initialsOf(name) {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -208,7 +195,7 @@ export default function OverviewCharts({ players }) {
             <Tooltip content={<Tip />} />
             <Bar dataKey="Agg Factor" radius={[4,4,0,0]}>
               {afData.map((d, i) => (
-                <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                <Cell key={i} fill={PLAYER_COLORS[i % PLAYER_COLORS.length]} />
               ))}
             </Bar>
           </BarChart>
@@ -228,7 +215,7 @@ export default function OverviewCharts({ players }) {
             <Tooltip content={<Tip />} />
             <Bar dataKey="Win %" fill="#ffd166" radius={[4,4,0,0]}>
               {winData.map((d, i) => (
-                <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                <Cell key={i} fill={PLAYER_COLORS[i % PLAYER_COLORS.length]} />
               ))}
             </Bar>
           </BarChart>

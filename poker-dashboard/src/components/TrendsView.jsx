@@ -4,13 +4,7 @@ import {
   ReferenceLine, CartesianGrid,
 } from 'recharts';
 import { resolveAlias, resolveDisplayName } from '../playerConfig.js';
-
-const COLORS = [
-  '#6c63ff','#00d4aa','#ffd166','#ff6b6b','#e91e8c',
-  '#74b9ff','#55efc4','#fdcb6e','#e17055','#a29bfe',
-  '#00cec9','#f78fb3','#7bed9f','#cf6a87','#3dc1d3',
-  '#f19066','#c44569','#546de5','#e15f41','#778beb',
-];
+import { PLAYER_COLORS } from '../colors.js';
 
 const SMALL_SAMPLE_THRESHOLD = 20; // hands dealt per session below which a marker is "noisy"
 
@@ -193,7 +187,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
         <div className="trends-picker-chips">
           {allPlayers.map((p) => {
             const isSel = selected.includes(p.name);
-            const color = COLORS[allPlayers.findIndex(x => x.name === p.name) % COLORS.length];
+            const color = PLAYER_COLORS[allPlayers.findIndex(x => x.name === p.name) % PLAYER_COLORS.length];
             return (
               <button
                 key={p.name}
@@ -223,7 +217,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
                 {m.key === 'netChips' && <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />}
                 {selected.map((name) => {
                   const idx = allPlayers.findIndex(x => x.name === name);
-                  const color = COLORS[idx % COLORS.length];
+                  const color = PLAYER_COLORS[idx % PLAYER_COLORS.length];
                   return (
                     <Line
                       key={name}
