@@ -1,20 +1,7 @@
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend,
 } from 'recharts';
-
-const COLORS = [
-  '#6c63ff','#00d4aa','#ffd166','#ff6b6b','#e91e8c',
-  '#74b9ff','#55efc4','#fdcb6e','#e17055','#a29bfe',
-  '#00cec9','#f78fb3','#7bed9f','#cf6a87','#3dc1d3',
-  '#f19066','#c44569','#546de5','#e15f41','#778beb',
-];
-
-// Deterministic per-player swatch (same scheme as Dashboard hero avatars).
-function colorFor(name) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return COLORS[h % COLORS.length];
-}
+import { PLAYER_COLORS, colorFor } from '../colors.js';
 function initialsOf(name) {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -147,9 +134,24 @@ export default function OverviewCharts({ players }) {
     style: classifyStyle(p.vpip, p.af),
   }));
 
+  const entryData = [...active].sort((a, b) => b.vpip - a.vpip).map(p => ({
+    name: p.name,
+    'Raised': p.pfr,
+    'Called / Limped': +(p.vpip - p.pfr).toFixed(1),
+  }));
+
   return (
     <div className="charts-grid">
-      {/* 1. Net Chips */}
+      {/* 1. Playing Style quadrants — full width, at the top */}
+      <div className="chart-card chart-card-wide">
+        <h3>Playing Style Quadrants</h3>
+        <StyleQuadrants players={scatterData} />
+        <p style={{ color: 'var(--muted)', fontSize: '0.75rem', marginTop: 8 }}>
+          Crosshairs at VPIP=30 and AF=1.5. Dot color matches the player&apos;s avatar elsewhere on the page.
+        </p>
+      </div>
+
+      {/* 2. Net Chips */}
       <div className="chart-card">
         <h3>Net Chips by Player</h3>
         <ResponsiveContainer width="100%" height={240}>
@@ -166,7 +168,7 @@ export default function OverviewCharts({ players }) {
         </ResponsiveContainer>
       </div>
 
-      {/* 2. VPIP */}
+      {/* 3. VPIP */}
       <div className="chart-card">
         <h3>VPIP % — Looseness</h3>
         <ResponsiveContainer width="100%" height={240}>
@@ -182,7 +184,7 @@ export default function OverviewCharts({ players }) {
         </p>
       </div>
 
-      {/* 3. PFR */}
+      {/* 4. PFR */}
       <div className="chart-card">
         <h3>PFR % — Preflop Aggression</h3>
         <ResponsiveContainer width="100%" height={240}>
@@ -198,7 +200,7 @@ export default function OverviewCharts({ players }) {
         </p>
       </div>
 
-      {/* 4. Aggression Factor */}
+      {/* 5. Aggression Factor */}
       <div className="chart-card">
         <h3>Aggression Factor</h3>
         <ResponsiveContainer width="100%" height={240}>
@@ -208,7 +210,7 @@ export default function OverviewCharts({ players }) {
             <Tooltip content={<Tip />} />
             <Bar dataKey="Agg Factor" radius={[4,4,0,0]}>
               {afData.map((d, i) => (
-                <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                <Cell key={i} fill={PLAYER_COLORS[i % PLAYER_COLORS.length]} />
               ))}
             </Bar>
           </BarChart>
@@ -218,7 +220,7 @@ export default function OverviewCharts({ players }) {
         </p>
       </div>
 
-      {/* 5. Win Rate */}
+      {/* 6. Win Rate */}
       <div className="chart-card">
         <h3>Win Rate %</h3>
         <ResponsiveContainer width="100%" height={240}>
@@ -228,7 +230,7 @@ export default function OverviewCharts({ players }) {
             <Tooltip content={<Tip />} />
             <Bar dataKey="Win %" fill="#ffd166" radius={[4,4,0,0]}>
               {winData.map((d, i) => (
-                <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                <Cell key={i} fill={PLAYER_COLORS[i % PLAYER_COLORS.length]} />
               ))}
             </Bar>
           </BarChart>
@@ -238,12 +240,21 @@ export default function OverviewCharts({ players }) {
         </p>
       </div>
 
-      {/* 6. Playing Style quadrants (custom CSS chart — see component comment) */}
+      {/* 7. Preflop Entry Breakdown */}
       <div className="chart-card">
-        <h3>Playing Style Quadrants</h3>
-        <StyleQuadrants players={scatterData} />
-        <p style={{ color: 'var(--muted)', fontSize: '0.75rem', marginTop: 8 }}>
-          Crosshairs at VPIP=25 and AF=2. Dot color matches the player&apos;s avatar elsewhere on the page.
+        <h3>Preflop Entry Breakdown</h3>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={entryData} margin={{ top: 4, right: 10, left: -10, bottom: 55 }}>
+            <XAxis dataKey="name" tick={{ fill: '#7c82a0', fontSize: 11 }} angle={-40} textAnchor="end" interval={0} height={55} />
+            <YAxis tick={{ fill: '#7c82a0', fontSize: 11 }} domain={[0, 100]} unit="%" />
+            <Tooltip content={<Tip />} />
+            <Legend verticalAlign="top" iconSize={9} wrapperStyle={{ fontSize: '0.72rem', color: '#7c82a0', paddingBottom: 6 }} />
+            <Bar dataKey="Raised" stackId="a" fill="#6c63ff" />
+            <Bar dataKey="Called / Limped" stackId="a" fill="#e91e8c" radius={[4,4,0,0]} />
+          </BarChart>
+        </ResponsiveContainer>
+        <p style={{ color: 'var(--muted)', fontSize: '0.75rem', marginTop: 6 }}>
+          Of voluntarily played hands (VPIP): violet = raised, pink = called or limped. Sorted loosest → tightest.
         </p>
       </div>
     </div>

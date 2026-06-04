@@ -4,13 +4,7 @@ import {
   ReferenceLine, CartesianGrid,
 } from 'recharts';
 import { resolveAlias, resolveDisplayName } from '../playerConfig.js';
-
-const COLORS = [
-  '#6c63ff','#00d4aa','#ffd166','#ff6b6b','#e91e8c',
-  '#74b9ff','#55efc4','#fdcb6e','#e17055','#a29bfe',
-  '#00cec9','#f78fb3','#7bed9f','#cf6a87','#3dc1d3',
-  '#f19066','#c44569','#546de5','#e15f41','#778beb',
-];
+import { PLAYER_COLORS } from '../colors.js';
 
 const SMALL_SAMPLE_THRESHOLD = 20; // hands dealt per session below which a marker is "noisy"
 
@@ -135,6 +129,25 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
     return out;
   }, [orderedSessions, selected, displayName]);
 
+  // Running cumulative net chips per player across sessions.
+  const cumulativeData = useMemo(() => {
+    const running = {};
+    for (const name of allPlayers.map(p => p.name)) running[name] = 0;
+    return orderedSessions.map(s => {
+      const row = { date: fmtDate(s.gameDate) };
+      const byDisplay = {};
+      for (const [rawName, sp] of Object.entries(s.stats?.players || {})) {
+        const dn = displayName(rawName);
+        byDisplay[dn] = (byDisplay[dn] ?? 0) + (sp.netChips ?? 0);
+      }
+      for (const name of selected) {
+        if (byDisplay[name] != null) running[name] = (running[name] || 0) + byDisplay[name];
+        row[name] = running[name] ?? 0;
+      }
+      return row;
+    });
+  }, [orderedSessions, selected, displayName, allPlayers]);
+
   // First→last delta per (player, metric), skipping sessions where the player wasn't dealt in.
   const movement = useMemo(() => {
     const rows = [];
@@ -193,7 +206,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
         <div className="trends-picker-chips">
           {allPlayers.map((p) => {
             const isSel = selected.includes(p.name);
-            const color = COLORS[allPlayers.findIndex(x => x.name === p.name) % COLORS.length];
+            const color = PLAYER_COLORS[allPlayers.findIndex(x => x.name === p.name) % PLAYER_COLORS.length];
             return (
               <button
                 key={p.name}
@@ -223,7 +236,7 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
                 {m.key === 'netChips' && <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />}
                 {selected.map((name) => {
                   const idx = allPlayers.findIndex(x => x.name === name);
-                  const color = COLORS[idx % COLORS.length];
+                  const color = PLAYER_COLORS[idx % PLAYER_COLORS.length];
                   return (
                     <Line
                       key={name}
@@ -242,6 +255,38 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
             </ResponsiveContainer>
           </div>
         ))}
+
+        <div className="chart-card">
+          <h3 style={{ margin: '0 0 4px' }}>Cumulative Net Chips</h3>
+          <p style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: 8 }}>
+            Running total across all sessions — who&apos;s actually up overall?
+          </p>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={cumulativeData} margin={{ top: 6, right: 12, left: -10, bottom: 6 }}>
+              <CartesianGrid stroke="#2e3350" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: '#7c82a0', fontSize: 11 }} />
+              <YAxis tick={{ fill: '#7c82a0', fontSize: 11 }} />
+              <Tooltip content={<Tip />} />
+              <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />
+              {selected.map((name) => {
+                const idx = allPlayers.findIndex(x => x.name === name);
+                const color = PLAYER_COLORS[idx % PLAYER_COLORS.length];
+                return (
+                  <Line
+                    key={name}
+                    type="monotone"
+                    dataKey={name}
+                    stroke={color}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                    isAnimationActive={false}
+                  />
+                );
+              })}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       <div className="chart-card" style={{ marginTop: 20 }}>

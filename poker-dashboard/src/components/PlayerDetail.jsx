@@ -7,8 +7,7 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend,
   LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine,
 } from 'recharts';
-
-const COLORS = ['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a29bfe','#55efc4','#fdcb6e','#e17055','#74b9ff'];
+import { PLAYER_COLORS } from '../colors.js';
 const RANKS_DESC = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 
 function fmtDate(iso) {
@@ -1233,7 +1232,7 @@ export default function PlayerDetail({ player: p, isMerged = false, isViewer = f
                   {catData.map((entry, i) => (
                     <Cell
                       key={i}
-                      fill={COLORS[i % COLORS.length]}
+                      fill={PLAYER_COLORS[i % PLAYER_COLORS.length]}
                       opacity={selectedCategory && selectedCategory !== entry.name ? 0.35 : 1}
                       stroke={selectedCategory === entry.name ? '#fff' : 'transparent'}
                       strokeWidth={selectedCategory === entry.name ? 2 : 0}
