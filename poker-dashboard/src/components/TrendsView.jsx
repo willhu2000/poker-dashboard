@@ -129,6 +129,25 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
     return out;
   }, [orderedSessions, selected, displayName]);
 
+  // Running cumulative net chips per player across sessions.
+  const cumulativeData = useMemo(() => {
+    const running = {};
+    for (const name of allPlayers.map(p => p.name)) running[name] = 0;
+    return orderedSessions.map(s => {
+      const row = { date: fmtDate(s.gameDate) };
+      const byDisplay = {};
+      for (const [rawName, sp] of Object.entries(s.stats?.players || {})) {
+        const dn = displayName(rawName);
+        byDisplay[dn] = (byDisplay[dn] ?? 0) + (sp.netChips ?? 0);
+      }
+      for (const name of selected) {
+        if (byDisplay[name] != null) running[name] = (running[name] || 0) + byDisplay[name];
+        row[name] = running[name] ?? 0;
+      }
+      return row;
+    });
+  }, [orderedSessions, selected, displayName, allPlayers]);
+
   // First→last delta per (player, metric), skipping sessions where the player wasn't dealt in.
   const movement = useMemo(() => {
     const rows = [];
@@ -236,6 +255,38 @@ export default function TrendsView({ sessions, onBack, playerConfig }) {
             </ResponsiveContainer>
           </div>
         ))}
+
+        <div className="chart-card">
+          <h3 style={{ margin: '0 0 4px' }}>Cumulative Net Chips</h3>
+          <p style={{ color: 'var(--muted)', fontSize: '0.72rem', marginBottom: 8 }}>
+            Running total across all sessions — who&apos;s actually up overall?
+          </p>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={cumulativeData} margin={{ top: 6, right: 12, left: -10, bottom: 6 }}>
+              <CartesianGrid stroke="#2e3350" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: '#7c82a0', fontSize: 11 }} />
+              <YAxis tick={{ fill: '#7c82a0', fontSize: 11 }} />
+              <Tooltip content={<Tip />} />
+              <ReferenceLine y={0} stroke="#3a3f5c" strokeDasharray="4 4" />
+              {selected.map((name) => {
+                const idx = allPlayers.findIndex(x => x.name === name);
+                const color = PLAYER_COLORS[idx % PLAYER_COLORS.length];
+                return (
+                  <Line
+                    key={name}
+                    type="monotone"
+                    dataKey={name}
+                    stroke={color}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                    isAnimationActive={false}
+                  />
+                );
+              })}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       <div className="chart-card" style={{ marginTop: 20 }}>

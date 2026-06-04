@@ -30,6 +30,9 @@ function computeSummary(sessions, config) {
   let biggestPotWon = null;
   let biggestPotSplit = null;
   let worstBadBeat = null;
+  let bestSession = null;
+  let worstSession = null;
+  let suckOutCount = 0;
   let hasViewer = false;
   const viewer = config?.viewer;
 
@@ -45,7 +48,15 @@ function computeSummary(sessions, config) {
       const vp = s.stats?.players?.[rawName];
       if (!vp) continue;
       hasViewer = true;
-      viewerNet += vp.netChips ?? 0;
+      const sessionNet = vp.netChips ?? 0;
+      viewerNet += sessionNet;
+
+      if (!bestSession || sessionNet > bestSession.net)
+        bestSession = { net: sessionNet, fileName: s.fileName };
+      if (!worstSession || sessionNet < worstSession.net)
+        worstSession = { net: sessionNet, fileName: s.fileName };
+
+      suckOutCount += (vp.suckOuts?.length || 0);
 
       for (const h of (vp.handsHistory || [])) {
         if (!h.won) continue;
@@ -69,7 +80,7 @@ function computeSummary(sessions, config) {
     }
   }
 
-  return { totalHands, viewerNet, hasViewer, biggestPotWon, biggestPotSplit, worstBadBeat };
+  return { totalHands, viewerNet, hasViewer, biggestPotWon, biggestPotSplit, worstBadBeat, bestSession, worstSession, suckOutCount };
 }
 
 export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange, viewerName }) {
@@ -207,6 +218,26 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
                   label="Worst Bad Beat"
                   value={summary.worstBadBeat ? summary.worstBadBeat.handName : '—'}
                   sub={summary.worstBadBeat ? `Pot: ${summary.worstBadBeat.potSize.toLocaleString()}` : null}
+                />
+                <SummaryCard
+                  icon="🚀"
+                  label="Best Session"
+                  value={summary.bestSession ? `${summary.bestSession.net >= 0 ? '+' : ''}${summary.bestSession.net.toLocaleString()}` : '—'}
+                  color={summary.bestSession?.net >= 0 ? 'var(--win)' : undefined}
+                  sub={summary.bestSession?.fileName}
+                />
+                <SummaryCard
+                  icon="💸"
+                  label="Worst Session"
+                  value={summary.worstSession ? `${summary.worstSession.net >= 0 ? '+' : ''}${summary.worstSession.net.toLocaleString()}` : '—'}
+                  color={summary.worstSession?.net < 0 ? 'var(--lose)' : undefined}
+                  sub={summary.worstSession?.fileName}
+                />
+                <SummaryCard
+                  icon="🎯"
+                  label="Suck-outs"
+                  value={summary.suckOutCount}
+                  sub="times you were behind and won"
                 />
               </>
             ) : (
