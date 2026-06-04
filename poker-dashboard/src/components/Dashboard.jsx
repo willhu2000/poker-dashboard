@@ -154,8 +154,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
   };
 
   const handleAddFile = useCallback((e) => {
-    const file = e.target.files[0];
-    if (file) onAddSession(file);
+    if (e.target.files?.length) onAddSession(e.target.files);
     e.target.value = '';
   }, [onAddSession]);
 
@@ -203,7 +202,7 @@ export default function Dashboard({ data, fileName, isMerged, sessionCount, sele
           <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={() => addInputRef.current.click()}>
             + Add Session
           </button>
-          <input ref={addInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleAddFile} />
+          <input ref={addInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }} onChange={handleAddFile} />
           <button className="btn btn-ghost" style={{ fontSize: '0.85rem' }} onClick={handleExportCsv} title="Download per-player stats as CSV">
             ⬇ Export CSV
           </button>

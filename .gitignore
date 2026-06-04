@@ -2,3 +2,7 @@
 # PokerNow session logs (keep locally, do not commit)
 poker_now_log_*.csv
 poker-dashboard/poker_now_log_*.csv
+
+# Dependencies / build caches (incl. a stray root node_modules + vitest cache)
+node_modules/
+test-results/

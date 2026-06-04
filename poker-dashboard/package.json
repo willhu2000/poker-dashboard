@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:fixtures": "vite --open /fixtures.html",
     "build": "vite build",
     "lint": "eslint .",
     "test": "vitest run",

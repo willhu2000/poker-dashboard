@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Dated test reports (vitest json reporter)
+test-results/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

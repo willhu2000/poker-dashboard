@@ -51,12 +51,11 @@ export default function App() {
   const [view, setView] = useState(null); // null | { type:'single', id } | { type:'merged', selectedIds:[] }
   const [error, setError] = useState(null);
   const [playerConfig, setPlayerConfig] = useState(() => loadPlayerConfig());
-  // Pending upload waiting for viewer-name selection. Set after a CSV is read
-  // and parsed; cleared after the user picks a player (or cancels).
-  // Shape: { fileName, rows, text, gameDate, hash, playerNames, openOnSave: bool }
-  // `text` is the raw CSV, persisted with the session so future schema changes
-  // can re-derive data without a re-upload.
-  const [pendingUpload, setPendingUpload] = useState(null);
+  // Queue of parsed uploads waiting for viewer-name selection (one modal at a
+  // time). A file only lands here if we can't auto-detect the viewer from the
+  // configured "this is me" player. Each item:
+  //   { fileName, rows, text, gameDate, hash, playerNames, navigate: bool }
+  const [pendingQueue, setPendingQueue] = useState([]);
 
   function handlePlayerConfigChange(newConfig) {
     savePlayerConfig(newConfig);
@@ -102,56 +101,94 @@ export default function App() {
     setSessions(loadSessions());
   }
 
-  // Step 1: read + parse the file, then queue it for viewer selection.
-  // `openOnSave` controls whether the new session auto-opens after save —
-  // true from the empty-state / sessions list, false from "Add Session" in
-  // the dashboard (which stays on the current view).
-  function stageFile(file, { openOnSave }) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
+  function readFileText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = () => reject(reader.error || new Error('could not read file'));
+      reader.readAsText(file);
+    });
+  }
+
+  // If a "this is me" viewer is configured and present in this file, return the
+  // raw player name to attribute the log to; otherwise null (→ show the picker).
+  function detectViewer(playerNames, config) {
+    const viewer = config?.viewer;
+    if (!viewer) return null;
+    return playerNames.find(n => resolveAlias(n, config) === viewer) || null;
+  }
+
+  // Analyse + persist a staged upload for a chosen viewer, then optionally open it.
+  function commitUpload(staged, viewerName) {
+    const stats = analyseLog(staged.rows, viewerName);
+    const id = saveSession(staged.fileName, stats, staged.gameDate, staged.hash, viewerName, staged.text);
+    refresh();
+    if (staged.navigate) setView({ type: 'single', id });
+    return id;
+  }
+
+  // Read + parse one or more CSVs. Files whose viewer we can auto-detect are
+  // saved straight away; the rest are queued for the viewer picker. `openOnSave`
+  // (true from the home/empty state) opens the session only when it's a single
+  // file. Skips duplicates and reports per-file errors.
+  async function stageFiles(fileList, { openOnSave }) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+    setError(null);
+    const navigate = openOnSave && files.length === 1;
+    const needPick = [];
+    const errs = [];
+    for (const file of files) {
       try {
-        const text = e.target.result;
+        const text = await readFileText(file);
         const hash = hashContent(text);
-        if (isDuplicate(hash)) throw new Error('This file has already been uploaded.');
+        if (isDuplicate(hash)) { errs.push(`${file.name}: already uploaded`); continue; }
         const rows = parseLog(text);
         const gameDate = extractGameDate(rows) || new Date();
         const playerNames = extractPlayerNames(rows);
-        const sessionName = formatSessionName(gameDate);
-        setError(null);
-        setPendingUpload({ fileName: sessionName, rows, text, gameDate, hash, playerNames, openOnSave });
+        const staged = { fileName: formatSessionName(gameDate), rows, text, gameDate, hash, playerNames, navigate };
+        const auto = detectViewer(playerNames, playerConfig);
+        if (auto) commitUpload(staged, auto);
+        else needPick.push(staged);
       } catch (err) {
         console.error(err);
-        setError('Failed to parse file: ' + err.message);
+        errs.push(`${file.name}: ${err.message}`);
       }
-    };
-    reader.readAsText(file);
-  }
-
-  // Step 2: the user picked their name in the modal — run analyseLog with
-  // that name, persist the session, and (optionally) navigate to it.
-  function handleViewerPicked(viewerName) {
-    if (!pendingUpload) return;
-    try {
-      const { fileName, rows, text, gameDate, hash, openOnSave } = pendingUpload;
-      const stats = analyseLog(rows, viewerName);
-      const id = saveSession(fileName, stats, gameDate, hash, viewerName, text);
-      setPendingUpload(null);
-      refresh();
-      if (openOnSave) setView({ type: 'single', id });
-    } catch (err) {
-      console.error(err);
-      setError('Failed to save session: ' + err.message);
-      setPendingUpload(null);
     }
+    if (errs.length) setError(errs.join(' · '));
+    if (needPick.length) setPendingQueue(q => [...q, ...needPick]);
   }
 
-  function handleNewFile(file) {
-    stageFile(file, { openOnSave: true });
+  // The user picked their player in the modal — commit that file, then re-check
+  // the rest of the queue against the now-known viewer so the same person's
+  // other files in this batch save automatically.
+  function handleViewerPicked(viewerName) {
+    const [current, ...rest] = pendingQueue;
+    if (!current) return;
+    try { commitUpload(current, viewerName); }
+    catch (err) { console.error(err); setError('Failed to save session: ' + err.message); }
+    // Re-check the rest of the batch against the just-picked viewer so the same
+    // person's other files save automatically.
+    const stillNeed = [];
+    for (const staged of rest) {
+      const auto = staged.playerNames.find(n => n === viewerName)
+        || (playerConfig?.viewer && staged.playerNames.find(n => resolveAlias(n, playerConfig) === playerConfig.viewer));
+      if (auto) commitUpload(staged, auto);
+      else stillNeed.push(staged);
+    }
+    setPendingQueue(stillNeed);
   }
 
-  function handleAddSession(file) {
-    stageFile(file, { openOnSave: false });
+  function handleCancelPicker() {
+    setPendingQueue(queue => queue.slice(1)); // skip this file, move to the next
+  }
+
+  function handleNewFiles(files) {
+    stageFiles(files, { openOnSave: true });
+  }
+
+  function handleAddSession(files) {
+    stageFiles(files, { openOnSave: false });
   }
 
   function handleDelete(id) {
@@ -160,12 +197,15 @@ export default function App() {
     if (view?.id === id) setView(null);
   }
 
+  const pendingUpload = pendingQueue[0] || null;
   const modal = pendingUpload && (
     <ViewerPickerModal
+      key={pendingUpload.hash}
       fileName={pendingUpload.fileName}
       playerNames={pendingUpload.playerNames}
+      remaining={pendingQueue.length}
       onConfirm={handleViewerPicked}
-      onCancel={() => setPendingUpload(null)}
+      onCancel={handleCancelPicker}
     />
   );
 
@@ -263,7 +303,7 @@ export default function App() {
           onViewMerged={() => setView({ type: 'merged', selectedIds: sessions.map(s => s.id) })}
           onViewTrends={() => setView({ type: 'trends' })}
           onDelete={handleDelete}
-          onNewFile={handleNewFile}
+          onNewFiles={handleNewFiles}
           error={error}
           playerConfig={playerConfig}
           onPlayerConfigChange={handlePlayerConfigChange}

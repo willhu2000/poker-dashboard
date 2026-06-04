@@ -72,13 +72,12 @@ function computeSummary(sessions, config) {
   return { totalHands, viewerNet, hasViewer, biggestPotWon, biggestPotSplit, worstBadBeat };
 }
 
-export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFile, error, playerConfig, onPlayerConfigChange, viewerName }) {
+export default function SessionsHome({ sessions, onView, onViewMerged, onViewTrends, onDelete, onNewFiles, error, playerConfig, onPlayerConfigChange, viewerName }) {
   const inputRef = useRef(null);
 
   const handleFiles = useCallback((files) => {
-    const file = files[0];
-    if (file) onNewFile(file);
-  }, [onNewFile]);
+    if (files && files.length) onNewFiles(files);
+  }, [onNewFiles]);
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
@@ -112,7 +111,7 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
           <p><strong>Drop your CSV here</strong></p>
           <p>or click to browse</p>
         </div>
-        <input ref={inputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
+        <input ref={inputRef} type="file" accept=".csv" multiple style={{ display: "none" }} onChange={e => handleFiles(e.target.files)} />
         {error && <p style={{ color: 'var(--red)' }}>{error}</p>}
         <p style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
           Export from PokerNow → Settings → Download CSV
@@ -234,7 +233,7 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
           <span style={{ fontSize: '1.4rem', marginRight: 10 }}>📁</span>
           <span><strong>Drop a new CSV</strong> or click to browse</span>
         </div>
-        <input ref={inputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
+        <input ref={inputRef} type="file" accept=".csv" multiple style={{ display: "none" }} onChange={e => handleFiles(e.target.files)} />
         {error && <p style={{ color: 'var(--red)', marginTop: 8 }}>{error}</p>}
 
         <div className="sessions-list-header">
@@ -248,7 +247,7 @@ export default function SessionsHome({ sessions, onView, onViewMerged, onViewTre
               <div className="session-info">
                 <div className="session-name">{s.fileName}</div>
                 <div className="session-meta">
-                  {fmt(s.uploadedAt)} · {s.handCount} hands · {s.playerNames.length} players
+                  {fmt(s.gameDate || s.uploadedAt)} · {s.handCount} hands · {s.playerNames.length} players
                 </div>
                 <div className="session-players">
                   {s.playerNames.slice(0, 6).join(', ')}{s.playerNames.length > 6 ? ` +${s.playerNames.length - 6} more` : ''}

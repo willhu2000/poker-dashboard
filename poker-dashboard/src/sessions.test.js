@@ -34,6 +34,35 @@ describe('mergeSessions — single session', () => {
   });
 });
 
+describe('mergeSessions — multiple sessions', () => {
+  // Two identical sessions → accumulators double, derived stats recompute, and
+  // both sessions' action logs are present under prefixed keys.
+  const merged = mergeSessions([makeSession('s1'), makeSession('s2')], null);
+  const alice = merged.players['Alice'];
+  const bob = merged.players['Bob'];
+
+  it('sums hand counts and per-player accumulators', () => {
+    expect(merged.handCount).toBe(4);     // 2 hands × 2 sessions
+    expect(alice.handsDealt).toBe(4);
+    expect(alice.handsWon).toBe(4);       // won both hands, both sessions
+    expect(alice.handsSplit).toBe(2);     // the split hand, both sessions
+    expect(bob.handsDealt).toBe(4);
+    expect(bob.handsWon).toBe(2);
+  });
+
+  it('recomputes derived percentages from the summed totals', () => {
+    // Alice won every hand → 100% win rate; VPIP from 4/4 voluntary entries.
+    expect(alice.winRate).toBe(100);
+    expect(alice.vpip).toBe(100);
+  });
+
+  it('keeps both sessions\' action logs under prefixed keys', () => {
+    expect(merged.handActionLogs['s1_1']).toBeTruthy();
+    expect(merged.handActionLogs['s2_1']).toBeTruthy();
+    expect(merged.handActionLogs['s2_2']).toBeTruthy();
+  });
+});
+
 describe('mergeSessions — split back-fill for legacy data', () => {
   it('reconstructs isSplit / take-home from stored action logs', () => {
     // Simulate a pre-split-tracking save: strip the split fields but keep the

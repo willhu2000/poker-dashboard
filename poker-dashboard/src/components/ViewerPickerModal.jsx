@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 // Modal shown after a CSV is selected. The user picks which player at the
 // table is them, so "Your hand is …" lines from the log get attributed to
 // the right person rather than guessed from the player names.
-export default function ViewerPickerModal({ fileName, playerNames, onConfirm, onCancel }) {
+export default function ViewerPickerModal({ fileName, playerNames, onConfirm, onCancel, remaining = 1 }) {
   const [selected, setSelected] = useState(playerNames[0] || '');
 
   useEffect(() => {
@@ -26,6 +26,7 @@ export default function ViewerPickerModal({ fileName, playerNames, onConfirm, on
         </p>
         <div className="viewer-picker-file">
           📄 <strong>{fileName}</strong>
+          {remaining > 1 && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>· {remaining} files left</span>}
         </div>
 
         {playerNames.length === 0 ? (
